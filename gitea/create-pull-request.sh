@@ -11,13 +11,12 @@
 set -euo pipefail
 set +x # même lancé avec bash -x, la trace s'arrête ici, avant la lecture du jeton
 
-readonly canonical_repo="Eleyone/eleyone.fr"
-readonly token_procedure="docs/procedures/gitea-token.md"
+script_name=create-pull-request
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/gitea.sh
+. "$script_dir/lib/gitea.sh"
 
-die() { printf 'create-pull-request: %b\n' "$*" >&2; exit 1; }
-
-command -v jq >/dev/null 2>&1 || die "jq est introuvable. Installation : sudo apt install jq"
-command -v curl >/dev/null 2>&1 || die "curl est introuvable."
+require_tools
 
 title="" body_file=""
 while (($#)); do
@@ -38,39 +37,7 @@ body_file=${body_file:-$root/.pr-body.md}
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-# .env est lu ligne par ligne, jamais avec source, et aucune valeur n'est affichée
-[[ -f .env ]] || die ".env absent à la racine du dépôt. Procédure : $token_procedure"
-gitea_url="" gitea_user="" gitea_token=""
-while IFS= read -r line || [[ -n $line ]]; do
-  value=${line#*=}; value=${value%$'\r'}; value=${value%\"}; value=${value#\"}
-  case $line in
-    GITEA_URL=*) gitea_url=$value ;;
-    GITEA_USER=*) gitea_user=$value ;;
-    GITEA_TOKEN=*) gitea_token=$value ;;
-  esac
-done < .env
-[[ -n $gitea_url ]] || die "GITEA_URL absente de .env. Procédure : $token_procedure"
-[[ -n $gitea_user ]] || die "GITEA_USER absente de .env. Procédure : $token_procedure"
-[[ -n $gitea_token ]] || die "GITEA_TOKEN absente de .env. Procédure : $token_procedure"
-
-api() { # méthode, chemin, fichier de réponse[, fichier de corps] ; affiche le code HTTP
-  local args=(-s -K - -o "$3" -w '%{http_code}' -X "$1")
-  [[ -z ${4:-} ]] || args+=(-H 'Content-Type: application/json' --data "@$4")
-  # le jeton passe par l'entrée standard : il n'apparaît pas dans la liste des processus
-  printf 'header = "Authorization: token %s"\n' "$gitea_token" \
-    | curl "${args[@]}" "${gitea_url%/}/api/v1$2" || true
-}
-
-forge_message() { # message d'erreur de la forge, sans adresse
-  jq -r '.message // empty' "$1" 2>/dev/null | head -c 300 \
-    | sed -E 's#[a-zA-Z][a-zA-Z0-9+.-]*://[^[:space:]]+#<adresse>#g' || true
-}
-
-# nom canonique du dépôt : vérifié avant tout appel d'écriture
-remote_url=$(git remote get-url origin 2>/dev/null) || die "aucun dépôt distant origin."
-repo_path=$(printf '%s\n' "$remote_url" \
-  | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]*/##; s#^[^/:]*@[^:]*:##; s#\.git$##; s#/+$##')
-[[ $repo_path == "$canonical_repo" ]] || die "le dépôt distant origin n'est pas $canonical_repo : rien n'est ouvert."
+check_origin
 
 branch=$(git symbolic-ref --quiet --short HEAD) || die "HEAD détachée : se placer sur la branche de la PR."
 case $branch in
@@ -106,14 +73,13 @@ if [[ -s $tmp/patterns ]]; then
   ((rc == 1)) || die "vérification du titre et du corps impossible : rien n'est ouvert."
 fi
 
-code=$(api GET /user "$tmp/user.json")
-[[ $code == 200 ]] || die "la forge refuse le jeton ou ne répond pas (HTTP $code). Procédure : $token_procedure"
-[[ $(jq -r '.login // empty' "$tmp/user.json") == "$gitea_user" ]] \
-  || die "le jeton n'appartient pas au compte GITEA_USER. Procédure : $token_procedure"
+# .env n'est lu qu'ici, juste avant le premier appel à l'API
+load_gitea_env "$root/.env"
+check_token_owner "$tmp/user.json"
 
 page=1
 while :; do
-  code=$(api GET "/repos/$canonical_repo/pulls?state=open&limit=50&page=$page" "$tmp/open.json")
+  code=$(gitea_api GET "/repos/$gitea_canonical_repo/pulls?state=open&limit=50&page=$page" "$tmp/open.json")
   [[ $code == 200 ]] || die "lecture des PR ouvertes impossible (HTTP $code) : $(forge_message "$tmp/open.json")"
   existing=$(jq -r --arg b "$branch" '[.[] | select(.head.ref == $b) | .number] | first // empty' "$tmp/open.json")
   [[ -z $existing ]] || die "une PR est déjà ouverte pour $branch : n° $existing."
@@ -124,12 +90,12 @@ done
 jq -n --arg head "$branch" --arg base "$base" --arg title "$title" --rawfile body "$body_file" \
   '{head: $head, base: $base, title: $title, body: $body}' > "$tmp/payload.json" 2>/dev/null \
   || die "corps illisible : texte UTF-8 attendu."
-code=$(api POST "/repos/$canonical_repo/pulls" "$tmp/created.json" "$tmp/payload.json")
+code=$(gitea_api POST "/repos/$gitea_canonical_repo/pulls" "$tmp/created.json" "$tmp/payload.json")
 [[ $code == 201 ]] || die "la forge refuse la création (HTTP $code) : $(forge_message "$tmp/created.json")"
 number=$(jq -r '.number' "$tmp/created.json")
 
 # le corps publié est relu et comparé octet par octet au fichier
-code=$(api GET "/repos/$canonical_repo/pulls/$number" "$tmp/pr.json")
+code=$(gitea_api GET "/repos/$gitea_canonical_repo/pulls/$number" "$tmp/pr.json")
 jq -j '.body' "$tmp/pr.json" > "$tmp/published" 2>/dev/null || true
 if [[ $code != 200 ]] || ! cmp -s "$tmp/published" "$body_file"; then
   die "PR n° $number ouverte, mais son corps publié diffère du fichier : le corriger sur la forge."

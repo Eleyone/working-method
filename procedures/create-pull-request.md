@@ -40,14 +40,14 @@ Dans l'ordre. Tout refus arrête le script **avant la moindre écriture sur la f
 
 1. `jq` et `curl` sont présents.
 2. Un titre est donné, et le fichier de corps existe et n'est pas vide.
-3. `.env` existe et contient les trois variables. Le fichier est lu ligne par ligne, jamais chargé avec `source` ; aucune valeur n'est affichée, et le jeton n'est jamais demandé. Un manque renvoie à `gitea-token.md`.
-4. Le dépôt distant `origin` est bien `Eleyone/eleyone.fr`, nom canonique écrit dans le script.
-5. Le préfixe de la branche donne la base (tableau ci-dessus).
-6. Aucune modification n'est en attente, fichiers non suivis compris.
-7. Le fichier de motifs existe.
-8. La branche est poussée sur la forge au même commit que la branche locale ; la base est lue sur la forge.
-9. `scripts/check-private.sh history` passe sur les commits de la branche, avec la liste des motifs.
-10. Ni le titre ni le corps ne contiennent de motif privé. Un refus ne montre ni le motif ni le contenu.
+3. Le dépôt distant `origin` est bien `Eleyone/eleyone.fr`, nom canonique écrit dans `scripts/lib/gitea.sh`.
+4. Le préfixe de la branche donne la base (tableau ci-dessus).
+5. Aucune modification n'est en attente, fichiers non suivis compris.
+6. Le fichier de motifs existe.
+7. La branche est poussée sur la forge au même commit que la branche locale ; la base est lue sur la forge.
+8. `scripts/check-private.sh history` passe sur les commits de la branche, avec la liste des motifs.
+9. Ni le titre ni le corps ne contiennent de motif privé. Un refus ne montre ni le motif ni le contenu.
+10. `.env` existe et contient les trois variables. Il n'est lu qu'à ce moment, juste avant le premier appel à l'API, par `scripts/lib/gitea.sh` : ligne par ligne, jamais chargé avec `source` ; aucune valeur n'est affichée, et le jeton n'est jamais demandé. Un manque renvoie à `gitea-token.md`.
 11. Le jeton appartient au compte `GITEA_USER`.
 12. Aucune PR n'est déjà ouverte pour la branche ; sinon, le script affiche son numéro et n'en ouvre pas de seconde.
 13. La PR est créée.

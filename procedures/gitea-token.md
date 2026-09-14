@@ -39,6 +39,8 @@ HUGO_LEGAL_PUBLISHER_NAME="<Prénom Nom>"
 
 Une valeur qui contient une espace (nom, adresse) se met **entre guillemets**. Sans guillemets, un shell qui lirait le fichier prendrait le deuxième mot pour une commande.
 
+Les scripts du poste lisent `.env` par `scripts/lib/gitea.sh` : les guillemets doubles ou simples qui entourent une valeur sont retirés ; pour une valeur sans guillemets, un commentaire `# …` précédé d'une espace est ignoré.
+
 Les valeurs réelles n'apparaissent dans aucun document du dépôt.
 
 ## Renouveler
