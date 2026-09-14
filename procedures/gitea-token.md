@@ -9,6 +9,7 @@ Les push git, eux, restent en SSH : une clé SSH n'ouvre pas l'API REST.
 - Le jeton vit **uniquement** dans `.env`, qui n'est jamais commité : il est ignoré par git et refusé par `scripts/check-private.sh`.
 - **Aucun script n'affiche ni ne demande le jeton.** Les scripts chargent `.env` sans afficher de valeur ; sans variable, ils échouent avec un message qui renvoie à cette procédure.
 - **Aucun script ne charge `.env` avec `source` (ou `.`).** Une ligne mal formée serait exécutée comme une commande, et le message d'erreur du shell peut afficher une partie de la valeur. Les scripts lisent `.env` ligne par ligne, ne retiennent que les clés dont ils ont besoin (`CLÉ=VALEUR`) et retirent les guillemets qui entourent la valeur.
+- **Aucun script à jeton ne s'exécute avec la trace du shell** (`bash -x`, `set -x`) : la trace afficherait le jeton. Chaque script qui lit le jeton coupe la trace dès sa première ligne, avant de lire `.env` ; ne jamais la réactiver pour déboguer.
 - **Aucun agent ne lit `.env`.** La lecture est refusée aux agents Claude (`.claude/settings.json`) et Antigravity (réglage du poste). Aucune valeur n'est copiée dans un fichier, un commit ou une conversation.
 - **En CI**, pas de jeton personnel : Gitea refuse les secrets dont le nom commence par `GITEA_` et fournit aux jobs leur propre jeton.
 - Un **mot de passe** n'est jamais utilisé à la place du jeton.
