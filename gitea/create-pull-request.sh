@@ -64,7 +64,9 @@ PRIVATE_PATTERNS_FILE=$patterns_file "$root/scripts/check-private.sh" history "$
   || die "le garde-fou public/privé refuse la branche : rien n'est ouvert."
 
 printf '%s\n' "$title" > "$tmp/title"
-grep -vE '^[[:space:]]*(#|$)' "$patterns_file" > "$tmp/patterns" || true
+rc=0
+grep -vE '^[[:space:]]*(#|$)' "$patterns_file" > "$tmp/patterns" 2>/dev/null || rc=$?
+((rc <= 1)) || die "lecture du fichier de motifs impossible : rien n'est ouvert."
 if [[ -s $tmp/patterns ]]; then
   rc=0
   grep -qiF -f "$tmp/patterns" "$tmp/title" "$body_file" || rc=$?

@@ -39,7 +39,7 @@ Tolérances :
 
 Si le suivi est absent, si sa section `development_status` est vide, ou si la liste des fichiers de story ne peut pas être lue, le script le dit et sort en échec : il ne conclut jamais à la cohérence sans avoir tout lu.
 
-Le script ne remplace pas `validate` de l'outil de planification BMAD, qui vérifie la structure du fichier de suivi ; il est écrit en bash seul, sans Python ni outil YAML ni option propre aux outils GNU, pour tourner en CI comme sur le poste.
+Le script ne remplace pas `validate` de l'outil de planification BMAD, qui vérifie la structure du fichier de suivi ; il est écrit en bash seul, sans Python ni outil YAML ni option propre aux outils GNU, pour tourner en CI comme sur le poste. Sa lecture du suivi est celle de `scripts/lib/sprint.sh`, commune avec `llm-review` et `verify-and-merge-pr`, et testée par `scripts/tests/run.sh` (`shell-scripts.md`).
 
 ## En cas d'écart
 

@@ -18,6 +18,8 @@ script_name=llm-review
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/gitea.sh
 . "$script_dir/lib/gitea.sh"
+# shellcheck source=lib/sprint.sh
+. "$script_dir/lib/sprint.sh"
 
 readonly reviewer_for_claude="gemini-3.1-pro-high"
 readonly reviewer_for_gemini="claude-opus-4-6-thinking"
@@ -72,7 +74,9 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-grep -vE '^[[:space:]]*(#|$)' "$patterns_file" > "$tmp/patterns" || true
+rc=0
+grep -vE '^[[:space:]]*(#|$)' "$patterns_file" > "$tmp/patterns" 2>/dev/null || rc=$?
+((rc <= 1)) || die "lecture du fichier de motifs impossible : rien n'est envoyé."
 contains_private() { # réussit si un des fichiers contient un motif privé
   [[ -s $tmp/patterns ]] || return 1
   local rc=0
@@ -126,9 +130,7 @@ if [[ -n $pr ]]; then
   content_name=REVIEW-DIFF.patch
   template="$root/scripts/llm-review-prompt.md"
   audit_range=("$base_sha..$head_sha")
-  if [[ $branch =~ ^[a-z]+/([0-9]+)-([0-9]+[a-z]?)- ]]; then
-    story_num="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-  fi
+  story_num=$(story_number_from_branch "$branch") || story_num=""
 else
   git fetch --quiet origin dev 2>/dev/null || die "lecture de dev sur la forge impossible."
   head_sha=$(git rev-parse --verify --quiet "refs/remotes/origin/dev^{commit}") || die "branche dev introuvable."
@@ -142,8 +144,9 @@ fi
 
 story_key=""
 if [[ -n $story_num ]]; then
-  story_key=$(grep -oE "^  ${story_num//./-}-[a-z0-9-]+:" "$root/$stories_dir/sprint-status.yaml" \
-    | head -n 1 | tr -d ' :' || true)
+  rc=0
+  story_key=$(sprint_story_key "$story_num" < "$root/$stories_dir/sprint-status.yaml") || rc=$?
+  ((rc != 2)) || die "story $story_num ambiguë dans le suivi de sprint (plusieurs clés) ou suivi illisible."
 fi
 [[ -z $story || -n $story_key ]] || die "story $story absente du suivi de sprint."
 
@@ -287,7 +290,8 @@ else
       printf '%s: %s absent : fichier de story non mis à jour.\n' "$script_name" "${story_file#"$root"/}" >&2
       exit 0
     fi
-    status=$(grep -E "^  $story_key:" "$root/$stories_dir/sprint-status.yaml" | head -n 1 | sed -E 's/^[^:]+:[[:space:]]*//' || true)
+    status=$(sprint_story_status "$story_key" < "$root/$stories_dir/sprint-status.yaml") \
+      || die "statut de la story $story_key illisible dans le suivi de sprint."
     title=$(head -n 1 "$tmp/spec.md" | sed 's/^### //')
     printf '# %s\n\nStatus: %s\n\nSpec : `%s`, story %s.\n\n## Revue de spec\n\n## Revue du code\n\n## Reporté\n' \
       "$title" "${status:-backlog}" "$epics_file" "$story" > "$story_file"

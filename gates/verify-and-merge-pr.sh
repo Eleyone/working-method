@@ -15,6 +15,10 @@ script_name=verify-and-merge-pr
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/gitea.sh
 . "$script_dir/lib/gitea.sh"
+# shellcheck source=lib/sprint.sh
+. "$script_dir/lib/sprint.sh"
+# shellcheck source=lib/merge-gates.sh
+. "$script_dir/lib/merge-gates.sh"
 die() { printf '%s: %b\n' "$script_name" "$*" >&2; exit 2; } # audit impossible : code 2
 
 readonly stories_dir="_bmad-output/implementation-artifacts"
@@ -76,8 +80,7 @@ read_pr "$tmp/pr.json"
 fields=$(jq -er '[.state, (.draft | tostring), (.mergeable | tostring), (.merged | tostring), .base.ref, .head.ref, .head.sha] | @tsv' "$tmp/pr.json" 2>/dev/null) \
   || die "réponse de la forge illisible pour la PR n° $pr."
 IFS=$'\t' read -r state draft mergeable merged base branch head_sha <<< "$fields"
-# le titre est lu seul, en texte brut : @tsv échapperait l'antislash, que read ne décoderait pas
-title=$(jq -er '.title | strings' "$tmp/pr.json" 2>/dev/null) || die "titre de la PR n° $pr illisible."
+title=$(pr_title "$tmp/pr.json") || die "titre de la PR n° $pr illisible."
 [[ $head_sha =~ ^[0-9a-f]{40}$ ]] || die "SHA de tête de la PR n° $pr illisible."
 
 printf '%s: PR n° %s « %s », %s → %s, tête %s\n' "$script_name" "$pr" "$title" "$branch" "$base" "${head_sha:0:7}"
@@ -108,51 +111,12 @@ changed=$(git diff --name-only "$base_sha...$head_sha") || die "liste des fichie
 [[ -n $changed ]] || die "la PR n° $pr ne modifie aucun fichier."
 
 story_num="" story_key=""
-if [[ $branch =~ ^[a-z]+/([0-9]+)-([0-9]+[a-z]?)- ]]; then
-  story_num="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-  story_key=$(git show "$head_sha:$status_file" 2>/dev/null \
-    | grep -oE "^[[:space:]]+${story_num//./-}-[a-z0-9-]+:" | head -n 1 | tr -d ' \t:' || true)
+if story_num=$(story_number_from_branch "$branch"); then
+  # story absente, en double ou suivi illisible : pas de clé ; le verrou de suivi en donne la raison
+  story_key=$(git show "$head_sha:$status_file" 2>/dev/null | sprint_story_key "$story_num") || story_key=""
+else
+  story_num=""
 fi
-
-# --- règle du commit de statut ---------------------------------------------------------------
-# Le commit de tête, seul après le SHA relu, ne change que les lignes de statut (story review → done,
-# last_updated, epic → done) et n'ajoute par ailleurs que des lignes au fichier de story et à
-# deferred-work.md. Affiche la raison d'un refus.
-status_commit_ok() { # $1 SHA relu, $2 SHA de tête
-  local reviewed=$1 head=$2 files f diff_out removed added
-  [[ $(git rev-list --count "$reviewed..$head") == 1 ]] || { echo "plus d'un commit après le SHA relu"; return 1; }
-  [[ -n $story_key ]] || { echo "aucune story associée à la branche"; return 1; }
-  files=$(git diff --name-only "$reviewed" "$head") || { echo "diff du commit de tête illisible"; return 1; }
-  while IFS= read -r f; do
-    [[ -n $f ]] || continue
-    # le diff est lu d'abord : un échec de git diff refuse la règle au lieu de donner une liste vide
-    diff_out=$(git diff -U0 "$reviewed" "$head" -- "$f") || { echo "diff de $f illisible"; return 1; }
-    removed=$(grep -E '^-' <<< "$diff_out" | grep -vE '^---( |$)' || true)
-    added=$(grep -E '^\+' <<< "$diff_out" | grep -vE '^\+\+\+( |$)' || true)
-    case $f in
-      "$status_file")
-        if grep -vE "^-[[:space:]]+$story_key: review$|^-last_updated: |^-[[:space:]]+epic-[0-9]+: [a-z-]+$" <<< "$removed" | grep -q .; then
-          echo "suivi de sprint : suppression hors des lignes de statut"; return 1
-        fi
-        if grep -vE "^\+[[:space:]]+$story_key: done$|^\+last_updated: |^\+[[:space:]]+epic-[0-9]+: done$" <<< "$added" | grep -q .; then
-          echo "suivi de sprint : ajout hors des lignes de statut"; return 1
-        fi
-        grep -qE "^\+[[:space:]]+$story_key: done$" <<< "$added" || { echo "suivi de sprint : la story ne passe pas à done"; return 1; }
-        ;;
-      "$stories_dir/$story_key.md")
-        [[ $removed == "-Status: review" ]] || { echo "fichier de story : suppression autre que « Status: review »"; return 1; }
-        grep -qxF "+Status: done" <<< "$added" || { echo "fichier de story : « Status: done » absent"; return 1; }
-        ;;
-      "$stories_dir/deferred-work.md")
-        [[ -z $removed ]] || { echo "deferred-work.md : ligne supprimée ou modifiée"; return 1; }
-        ;;
-      *)
-        echo "fichier $f modifié hors de la règle du commit de statut"; return 1
-        ;;
-    esac
-  done <<< "$files"
-  return 0
-}
 
 # --- verrou 2 : revue LLM ---------------------------------------------------------------------
 if ! grep -qv '^_bmad-output/' <<< "$changed"; then
@@ -164,33 +128,20 @@ else
   [[ $code == 200 ]] || die "lecture des réglages de l'API impossible (HTTP $code) : $(forge_message "$tmp/settings.json")"
   page_size=$(jq -er '.max_response_items' "$tmp/settings.json" 2>/dev/null) || die "réglages de l'API illisibles."
   [[ $page_size =~ ^[1-9][0-9]*$ ]] || die "réglages de l'API illisibles."
-  : > "$tmp/reviews.tsv"
-  page=1
-  while :; do
-    ((page <= max_timeline_pages)) \
-      || die "timeline de la PR plus longue que $max_timeline_pages pages : lecture des rapports incomplète."
-    code=$(gitea_api GET "/repos/$gitea_canonical_repo/issues/$pr/timeline?limit=$page_size&page=$page" "$tmp/timeline.json")
-    [[ $code == 200 ]] || die "lecture de la timeline de la PR impossible (HTTP $code) : $(forge_message "$tmp/timeline.json")"
-    # au-delà de la dernière page, la forge répond null et non une liste vide
-    count=$(jq -e 'if type == "array" then length elif type == "null" then 0 else error end' "$tmp/timeline.json" 2>/dev/null) \
-      || die "page de la timeline de la PR illisible."
-    jq -r --arg u "$gitea_user" \
-      '(. // [])[] | select(.type == "comment" and .user.login == $u) | ((.body // "") | split("\n")[0]) | select(startswith("llm-review "))' \
-      "$tmp/timeline.json" >> "$tmp/reviews.tsv" || die "timeline de la PR illisible."
-    ((count == page_size)) || break
-    page=$((page + 1))
-  done
-  last_report() { # $1 SHA : dernière ligne llm-review pour ce SHA et cette base, champs comparés à l'identique
-    awk -v sha="sha=$1" -v base="base=$base" '
-      NF == 5 && $1 == "llm-review" && $2 == sha && $3 == base && $4 ~ /^model=./ && ($5 == "verdict=pass" || $5 == "verdict=block") { last = $0 }
-      END { if (last != "") print last }
-    ' "$tmp/reviews.tsv"
+  fetch_timeline_page() { # $1 numéro de page, $2 fichier de réponse
+    local code
+    code=$(gitea_api GET "/repos/$gitea_canonical_repo/issues/$pr/timeline?limit=$page_size&page=$1" "$2")
+    [[ $code == 200 ]] || die "lecture de la timeline de la PR impossible (HTTP $code) : $(forge_message "$2")"
   }
-  head_report=$(last_report "$head_sha") || die "lecture des rapports de revue impossible."
+  rc=0
+  read_timeline_reports fetch_timeline_page "$gitea_user" "$page_size" "$max_timeline_pages" "$tmp/reviews.tsv" || rc=$?
+  ((rc != 3)) || die "timeline de la PR plus longue que $max_timeline_pages pages : lecture des rapports incomplète."
+  ((rc == 0)) || die "page de la timeline de la PR illisible."
+  head_report=$(last_report "$tmp/reviews.tsv" "$head_sha" "$base") || die "lecture des rapports de revue impossible."
   parent_sha=$(git rev-parse --verify --quiet "$head_sha^" || true)
   parent_report=""
   if [[ -n $parent_sha ]]; then
-    parent_report=$(last_report "$parent_sha") || die "lecture des rapports de revue impossible."
+    parent_report=$(last_report "$tmp/reviews.tsv" "$parent_sha" "$base") || die "lecture des rapports de revue impossible."
   fi
   if [[ -n $head_report ]]; then
     model=${head_report#*model=}; model=${model%% *}
@@ -203,7 +154,7 @@ else
     model=${parent_report#*model=}; model=${model%% *}
     if [[ $parent_report != *verdict=pass ]]; then
       report bloque "revue LLM" "dernier rapport sur le parent de la tête : block ($model)."
-    elif reason=$(status_commit_ok "$parent_sha" "$head_sha"); then
+    elif reason=$(status_commit_ok "$parent_sha" "$head_sha" "$story_key" "$status_file" "$stories_dir"); then
       report passe "revue LLM" "rapport pass sur ${parent_sha:0:7} ($model) ; le commit de tête respecte la règle du commit de statut."
     else
       report bloque "revue LLM" "rapport pass sur ${parent_sha:0:7}, mais le commit de tête sort de la règle du commit de statut ($reason) : nouvelle revue exigée."
@@ -226,18 +177,13 @@ fi
 # --- verrou 4 : CI ------------------------------------------------------------------------------
 code=$(gitea_api GET "/repos/$gitea_canonical_repo/commits/$head_sha/status" "$tmp/status.json")
 [[ $code == 200 ]] || die "lecture de l'état de la CI impossible (HTTP $code) : $(forge_message "$tmp/status.json")"
-ci_fields=$(jq -er '[.state // "", (.total_count // 0 | tostring)] | @tsv' "$tmp/status.json" 2>/dev/null) \
-  || die "état de la CI illisible."
-IFS=$'\t' read -r ci_state ci_total <<< "$ci_fields"
-if ((ci_total > 0)) && [[ $ci_state == success ]]; then
-  report passe "CI" "verte sur la tête."
-elif ((ci_total > 0)) && [[ $ci_state == pending ]]; then
-  # même pendant l'amorçage : une CI qui tourne n'est pas une CI absente
-  report bloque "CI" "en cours sur la tête : relancer l'audit quand elle est terminée."
-elif ((ci_total > 0)); then
-  report bloque "CI" "état $ci_state sur la tête."
-elif git cat-file -e "$base_sha:$ci_workflow" 2>/dev/null; then
-  report bloque "CI" "$ci_workflow existe sur la base : CI absente sur la tête, absent bloque (story 3.16)."
+ci_on_base=0
+if git cat-file -e "$base_sha:$ci_workflow" 2>/dev/null; then ci_on_base=1; fi
+ci_out=$(ci_gate "$tmp/status.json" "$ci_on_base" "$ci_workflow") || die "état de la CI illisible."
+ci_decision=${ci_out%%$'\t'*}
+ci_detail=${ci_out#*$'\t'}
+if [[ $ci_decision == passe || $ci_decision == bloque ]]; then
+  report "$ci_decision" "CI" "$ci_detail"
 else
   # règle d'amorçage : le substitut est le garde-fou déjà lancé, puis scripts/check.sh sur la tête s'il existe
   substitute="check-private.sh history (verrou garde-fou)"
@@ -300,8 +246,10 @@ trailers=$(git log --format='%(trailers:key=Co-Authored-By)' "$base_sha..$head_s
 trailers=$(sed '/^$/d' <<< "$trailers" | sort -u)
 printf '%s\n' "$subjects" > "$tmp/message.txt"
 if [[ -n $trailers ]]; then printf '\n%s\n' "$trailers" >> "$tmp/message.txt"; fi
-printf '%s (#%s)\n' "$title" "$pr" > "$tmp/titre.txt"
-grep -vE '^[[:space:]]*(#|$)' "$patterns_file" > "$tmp/patterns" || true
+merge_title "$tmp/pr-avant-fusion.json" "$pr" "$tmp/titre.txt" || die "titre de la PR n° $pr illisible."
+rc=0
+grep -vE '^[[:space:]]*(#|$)' "$patterns_file" > "$tmp/patterns" 2>/dev/null || rc=$?
+((rc <= 1)) || die "lecture du fichier de motifs impossible : rien n'est fusionné."
 if [[ -s $tmp/patterns ]]; then
   rc=0
   grep -qiF -f "$tmp/patterns" "$tmp/titre.txt" "$tmp/message.txt" || rc=$?

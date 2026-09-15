@@ -20,6 +20,10 @@ readonly usage="usage : sprint-consistency.sh [--merge <n.m>] [--rev <commit>]"
 
 die() { printf '%s: %b\n' "$script_name" "$*" >&2; exit 2; }
 
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/sprint.sh
+. "$script_dir/lib/sprint.sh"
+
 merge="" rev=""
 while (($#)); do
   case $1 in
@@ -59,18 +63,8 @@ fi
 file_exists "$status_file" || die "$status_file absent $where : aucune conclusion sur la cohérence."
 yaml=$(read_file "$status_file") || die "lecture de $status_file impossible $where."
 
-# section development_status : lignes « clé: valeur » indentées, quelle que soit l'indentation
-entries=$(awk '
-  /^development_status:[[:space:]]*$/ { inside = 1; next }
-  inside && /^[^[:space:]#]/ { exit }
-  inside && /^[[:space:]]+[^[:space:]#][^:]*:/ {
-    line = $0; sub(/^[[:space:]]+/, "", line)
-    key = line; sub(/:.*$/, "", key)
-    value = line; sub(/^[^:]*:[[:space:]]*/, "", value); sub(/[[:space:]]+#.*$/, "", value)
-    gsub(/["\047]/, "", value); sub(/[[:space:]]+$/, "", value)
-    print key "\t" value
-  }
-' <<< "$yaml")
+# section development_status : lecture commune de scripts/lib/sprint.sh
+entries=$(sprint_entries <<< "$yaml") || die "lecture de $status_file impossible $where."
 [[ -n $entries ]] || die "section development_status vide ou absente de $status_file $where : aucune conclusion sur la cohérence."
 
 # --- contrôles ---------------------------------------------------------------------------------
@@ -159,17 +153,13 @@ for number in "${!epic_total[@]}"; do
 done
 
 if [[ -n $merge ]]; then
-  prefix="${merge//./-}-"
-  merge_keys=()
-  for key in "${!story_status[@]}"; do
-    if [[ $key == "$prefix"* ]]; then merge_keys+=("$key"); fi
-  done
-  merge_key=${merge_keys[0]:-}
-  if ((${#merge_keys[@]} == 0)); then
+  rc=0
+  merge_key=$(sprint_story_key "$merge" <<< "$yaml") || rc=$?
+  if ((rc == 1)); then
     gap "story $merge absente du suivi : fusion refusée."
-  elif ((${#merge_keys[@]} > 1)); then
-    gap "plusieurs stories correspondent à $merge dans le suivi (${merge_keys[*]}) : fusion refusée."
-  elif [[ ${story_status[$merge_key]} != done ]]; then
+  elif ((rc != 0)); then
+    gap "plusieurs stories correspondent à $merge dans le suivi : fusion refusée."
+  elif [[ ${story_status[$merge_key]:-} != done ]]; then
     gap "story $merge_key à ${story_status[$merge_key]} dans le suivi : fusion refusée tant qu'elle n'est pas à done."
   elif ! file_exists "$stories_dir/$merge_key.md"; then
     gap "story $merge_key sans fichier de story : fusion refusée."

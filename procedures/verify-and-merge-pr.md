@@ -23,7 +23,7 @@ Il n'existe aucune option `--force`, et le script n'envoie jamais `force_merge` 
 
 ## Les cinq verrous
 
-Chaque verrou s'affiche avec son état : `passe`, `absent` (CI pendant l'amorçage, admis) ou `bloque`.
+Chaque verrou s'affiche avec son état : `passe`, `absent` (CI pendant l'amorçage, admis) ou `bloque`. Les appels à la forge restent dans le script ; les décisions (rapport retenu, règle du commit de statut, verrou CI, titre de fusion, lecture de la timeline) sont dans `scripts/lib/merge-gates.sh`, et la lecture du suivi dans `scripts/lib/sprint.sh`, toutes deux testées par `scripts/tests/run.sh` (`shell-scripts.md`).
 
 1. **PR fusionnable** : ouverte, pas en brouillon, fusionnable pour la forge (`mergeable`), pas déjà fusionnée, base `dev`. Une base `main` est refusée : la publication passe par `release`, un correctif de production par `hotfix`. Toute autre base est refusée. Une PR fermée ou déjà fusionnée arrête l'audit. Juste après un push, la forge peut afficher la PR « non fusionnable » le temps de recalculer son état : relancer l'audit quelques secondes plus tard avant de chercher un conflit (constat de la story 0.7).
 2. **Revue LLM** : compte le **dernier** commentaire `llm-review` publié par le compte `GITEA_USER`, pour la base de la PR :
