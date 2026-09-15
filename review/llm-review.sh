@@ -5,8 +5,10 @@
 #   llm-review.sh <numéro de PR> [--context <fichier>]   revue du code, verdict publié sur la PR
 #
 # AUTHOR_LLM=claude (défaut) → relecteur gemini-3.1-pro-high ; AUTHOR_LLM=gemini → claude-opus-4-6-thinking.
-# Le relecteur applique le skill bmad-review dans une copie isolée hors du dépôt (worktree git),
-# qui ne contient que les fichiers suivis. Son rapport doit citer un jeton de lecture aléatoire.
+# Le relecteur applique le skill bmad-review dans une copie isolée hors du dépôt : un export du commit
+# relu (git archive), sans .git, donc sans le chemin du dépôt de travail. Son rapport doit citer un jeton
+# de lecture aléatoire ; tout fichier qu'il crée, modifie ou supprime dans la copie est signalé. Il est lancé
+# sans --dangerously-skip-permissions : aucune commande shell ne lui est permise.
 # Procédure : docs/procedures/llm-review.md
 set -euo pipefail
 set +x # même lancé avec bash -x, la trace s'arrête ici, avant la lecture du jeton
@@ -55,18 +57,15 @@ cd "$root"
 check_origin
 
 patterns_file=${PRIVATE_PATTERNS_FILE:-$root/docs/private/forbidden-patterns.txt}
-[[ -f $patterns_file ]] || die "fichier de motifs absent : aucun envoi sans audit (docs/procedures/check-private.md)."
+require_patterns_file "$patterns_file" "aucun envoi sans audit"
 
 tmp=$(mktemp -d)
 case "$tmp/" in
   "$root"/*) rm -rf "$tmp"; die "le dossier temporaire est dans le dépôt : définir TMPDIR hors du dépôt." ;;
 esac
-worktree=""
 cleanup() {
-  if [[ -n $worktree ]]; then
-    git -C "$root" worktree remove --force "$worktree" >/dev/null 2>&1 || true
-    git -C "$root" worktree prune >/dev/null 2>&1 || true
-  fi
+  # le relecteur a pu retirer des droits dans la copie : ils sont rendus avant la suppression
+  chmod -R u+rwx "$tmp" 2>/dev/null || true
   rm -rf "$tmp"
 }
 trap cleanup EXIT
@@ -81,6 +80,22 @@ contains_private() { # réussit si un des fichiers contient un motif privé
   ((rc <= 1)) || die "vérification des motifs impossible."
   return "$rc"
 }
+# Empreinte de chaque entrée d'un dossier, une ligne « empreinte<TAB>chemin », triée : sha256 d'un fichier,
+# cible d'un lien, « dossier » pour un dossier. sha256sum échappe déjà un nom qui contient un saut de ligne ;
+# les noms de liens et de dossiers sont écrits avec %q, pour tenir eux aussi sur une ligne.
+# Chaque étape a son propre arrêt.
+copy_manifest() { # $1 dossier, $2 fichier de sortie
+  (cd "$1" && find . -type f -print0 | xargs -0 -r sha256sum) > "$2.fichiers" || return 1
+  (cd "$1" && find . -type l -print0 | while IFS= read -r -d '' entry; do
+    target=$(readlink -- "$entry") || exit 1
+    printf 'lien:%q\t%q\n' "$target" "$entry"
+  done) > "$2.liens" || return 1
+  (cd "$1" && find . -mindepth 1 -type d -print0 | while IFS= read -r -d '' entry; do
+    printf 'dossier\t%q\n' "$entry"
+  done) > "$2.dossiers" || return 1
+  sed -E 's/^\\?([0-9a-f]{64})  /\1\t/' "$2.fichiers" | cat - "$2.liens" "$2.dossiers" | LC_ALL=C sort > "$2" || return 1
+}
+
 if [[ -n $context_file ]] && contains_private "$context_file"; then
   die "le fichier de contexte contient un motif privé (contenu masqué) : rien n'est envoyé."
 fi
@@ -133,10 +148,13 @@ fi
 [[ -z $story || -n $story_key ]] || die "story $story absente du suivi de sprint."
 
 # --- copie isolée, garde-fou, jeton de lecture -------------------------------------------------
-worktree="$tmp/copie"
-git worktree add --quiet --detach "$worktree" "$head_sha" 2>/dev/null || die "création de la copie isolée impossible."
-for private in .env docs/private .pr-body.md; do
-  [[ ! -e $worktree/$private ]] || die "la copie isolée contient $private : rien n'est envoyé."
+# un export du commit relu, pas un worktree : le fichier .git d'un worktree donnerait au relecteur
+# le chemin du dépôt de travail, où se trouvent .env et docs/private/
+copy="$tmp/copie"
+mkdir "$copy" || die "création de la copie isolée impossible."
+git archive --format=tar "$head_sha" | tar -x -C "$copy" || die "export de la copie isolée impossible."
+for private in .git .env docs/private .pr-body.md; do
+  [[ ! -e $copy/$private && ! -L $copy/$private ]] || die "la copie isolée contient $private : rien n'est envoyé."
 done
 
 PRIVATE_PATTERNS_FILE=$patterns_file "$root/scripts/check-private.sh" history "${audit_range[@]}" \
@@ -145,17 +163,17 @@ PRIVATE_PATTERNS_FILE=$patterns_file "$root/scripts/check-private.sh" history "$
 canary=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
 [[ ${#canary} == 24 ]] || die "création du jeton de lecture impossible."
 if [[ -n $pr ]]; then
-  printf '# jeton-de-lecture: %s\n' "$canary" > "$worktree/$content_name"
-  git diff "$base_sha...$head_sha" >> "$worktree/$content_name" || die "diff de la PR impossible."
+  printf '# jeton-de-lecture: %s\n' "$canary" > "$copy/$content_name"
+  git diff "$base_sha...$head_sha" >> "$copy/$content_name" || die "diff de la PR impossible."
 else
   awk -v h="### Story $story :" 'index($0, h) == 1 { f = 1; print; next } f && /^##/ { exit } f { print }' \
-    "$worktree/$epics_file" > "$tmp/spec.md"
+    "$copy/$epics_file" > "$tmp/spec.md"
   [[ -s $tmp/spec.md ]] || die "story $story introuvable dans epics.md sur dev."
-  { printf '<!-- jeton-de-lecture: %s -->\n\n' "$canary"; cat "$tmp/spec.md"; } > "$worktree/$content_name"
+  { printf '<!-- jeton-de-lecture: %s -->\n\n' "$canary"; cat "$tmp/spec.md"; } > "$copy/$content_name"
 fi
 
 prompt=$(<"$template")
-prompt=${prompt//'{{WORKTREE}}'/$worktree}
+prompt=${prompt//'{{WORKTREE}}'/$copy}
 prompt=${prompt//'{{CONTENT}}'/$content_name}
 prompt=${prompt//'{{SHA}}'/$head_sha}
 prompt=${prompt//'{{LENSES}}'/$lenses}
@@ -169,24 +187,44 @@ fi
 
 # --- relecture ---------------------------------------------------------------------------------
 printf '%s: relecture par %s (angles : %s), jusqu’à %s min…\n' "$script_name" "$model" "$lenses" "$((review_timeout / 60))" >&2
+copy_manifest "$copy" "$tmp/manifeste-avant" || die "empreinte de la copie isolée impossible : rien n'est envoyé."
 rc=0
-(cd "$worktree" && timeout "$review_timeout" agy --print "$prompt" --add-dir "$worktree" --mode plan \
-  --model "$model" --dangerously-skip-permissions --print-timeout 14m) > "$tmp/brut.md" 2> "$tmp/agy.err" || rc=$?
+# sans --dangerously-skip-permissions : sans interface, toute commande shell est refusée au relecteur, qui ne lit
+# que par ses outils de fichiers ; avec ce drapeau, un simple grep lisait un .env (essai de la story 0.8)
+(cd "$copy" && timeout "$review_timeout" agy --print "$prompt" --add-dir "$copy" --mode plan \
+  --model "$model" --print-timeout 14m < /dev/null) > "$tmp/brut.md" 2> "$tmp/agy.err" || rc=$?
 ((rc == 0)) || die "le relecteur n'a pas abouti (code $rc, 124 = délai dépassé) : rien n'est publié."
 
-status_out=$(git -C "$worktree" status --porcelain --untracked-files=all 2>/dev/null) \
-  || die "lecture de l'état de la copie isolée impossible."
-written=$(grep -vxF "?? $content_name" <<< "$status_out" | sed '/^$/d' || true)
-if [[ -n $written ]]; then
-  written_label=$(cut -c4- <<< "$written" | paste -sd ',' - | sed 's/,/, /g')
-  printf '%s: fichiers créés ou modifiés par le relecteur dans la copie : %s\n' "$script_name" "$written_label" >&2
+# toute entrée ajoutée, modifiée ou supprimée par le relecteur, fichiers cachés compris
+chmod -R u+rX "$copy" 2>/dev/null || true
+copy_manifest "$copy" "$tmp/manifeste-apres" || die "empreinte de la copie isolée après la revue impossible : rien n'est publié."
+changes=$(awk -F '\t' '
+  { path = substr($0, length($1) + 2); sub(/^\.\//, "", path) }
+  NR == FNR { before[path] = $1; next }
+  !(path in before) { print "ajouté " path; next }
+  before[path] != $1 { print "modifié " path }
+  { delete before[path] }
+  END { for (path in before) print "supprimé " path }
+' "$tmp/manifeste-avant" "$tmp/manifeste-apres") || die "comparaison de la copie isolée impossible : rien n'est publié."
+if [[ -n $changes ]]; then
+  written_label=$(LC_ALL=C sort <<< "$changes" | paste -sd ',' - | sed 's/,/, /g')
+  printf '%s: fichiers créés, modifiés ou supprimés par le relecteur dans la copie : %s\n' "$script_name" "$written_label" >&2
 else
   written_label="aucun"
 fi
 
-jeton_line=$(grep -n -m 1 -F "JETON: $canary" "$tmp/brut.md" | cut -d: -f1 || true)
-[[ -n $jeton_line ]] || die "le rapport ne cite pas le jeton de lecture : ce n'est pas une revue, rien n'est publié."
-tail -n "+$jeton_line" "$tmp/brut.md" | tr -d '\r' > "$tmp/rapport.md"
+tr -d '\r' < "$tmp/brut.md" > "$tmp/brut-lf.md" || die "lecture de la réponse du relecteur impossible : rien n'est publié."
+# la réponse peut contenir la réflexion du relecteur et ses brouillons, qui citent déjà le jeton :
+# le rapport commence à la dernière ligne qui n'est que le jeton
+jeton_line=$(grep -n -x -E "[[:space:]]*\`?JETON: $canary\`?[[:space:]]*" "$tmp/brut-lf.md" | tail -n 1 | cut -d: -f1 || true)
+if [[ -z $jeton_line ]]; then
+  # une commande shell refusée arrête le relecteur, même après un début de réponse
+  if grep -qi 'permission' "$tmp/agy.err" 2>/dev/null; then
+    die "le relecteur a tenté une commande shell, qui lui est refusée : rien n'est publié. Relancer."
+  fi
+  die "le rapport ne cite pas le jeton de lecture : ce n'est pas une revue, rien n'est publié."
+fi
+tail -n "+$jeton_line" "$tmp/brut-lf.md" > "$tmp/rapport.md"
 
 verdict=""
 if [[ -n $pr ]]; then

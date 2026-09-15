@@ -10,9 +10,10 @@
 #   gitea_api <méthode> <chemin> <réponse> [<corps JSON>]   affiche le code HTTP (000 sans réponse)
 #   forge_message <réponse>        message d'erreur de la forge, sans adresse
 #   check_token_owner <réponse>    le jeton appartient au compte GITEA_USER
+#   require_patterns_file <fichier> <conséquence>   fichier de motifs présent, avec au moins un motif
 #
 # Procédures : docs/procedures/gitea-token.md, docs/procedures/create-pull-request.md,
-# docs/procedures/llm-review.md
+# docs/procedures/llm-review.md, docs/procedures/verify-and-merge-pr.md
 
 readonly gitea_canonical_repo="Eleyone/eleyone.fr"
 readonly gitea_token_procedure="docs/procedures/gitea-token.md"
@@ -85,4 +86,14 @@ check_token_owner() {
     || die "la forge refuse le jeton ou ne répond pas (HTTP $code). Procédure : $gitea_token_procedure"
   [[ $(jq -r '.login // empty' "$1") == "$gitea_user" ]] \
     || die "le jeton n'appartient pas au compte GITEA_USER. Procédure : $gitea_token_procedure"
+}
+
+# Un fichier de motifs sans aucun motif (seulement des commentaires ou des lignes blanches) ferait
+# passer le garde-fou sur les chemins seuls : il est refusé comme un fichier absent.
+require_patterns_file() { # $1 fichier de motifs, $2 conséquence affichée
+  local rc=0
+  [[ -f $1 ]] || die "fichier de motifs absent : $2 (docs/procedures/check-private.md)."
+  grep -qvE '^[[:space:]]*(#|$)' "$1" 2>/dev/null || rc=$?
+  ((rc != 1)) || die "fichier de motifs sans aucun motif : $2 (docs/procedures/check-private.md)."
+  ((rc == 0)) || die "fichier de motifs illisible : $2."
 }

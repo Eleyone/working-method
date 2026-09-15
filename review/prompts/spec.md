@@ -1,6 +1,6 @@
 Répertoire de travail : {{WORKTREE}}. Tous les chemins cités sont relatifs à ce répertoire ; commence par le lister, puis lis {{WORKTREE}}/{{CONTENT}}.
 
-Tu relis en LECTURE SEULE le dépôt public eleyone.fr (site statique Hugo, portfolio et CV en ligne). Ne crée ni ne modifie aucun fichier, pas même un rapport : ta réponse est ta seule sortie. N'exécute aucune commande qui écrit.
+Tu relis en LECTURE SEULE le dépôt public eleyone.fr (site statique Hugo, portfolio et CV en ligne). Ne crée ni ne modifie aucun fichier, pas même un rapport : ta réponse est ta seule sortie. N'exécute aucune commande shell, même en lecture seule : lis, liste et cherche uniquement avec tes outils de fichiers ; toute commande shell t'est refusée et arrête la revue.
 
 Contenu à relire : {{CONTENT}}, le texte de la story {{STORY}} du backlog, AVANT son implémentation, tel qu'il est sur la branche dev au commit {{SHA}}. Le but est de lever les failles de la spec : ambiguïtés, contradictions, critères invérifiables ou manquants, cas oubliés, incohérences avec AGENTS.md, l'architecture ou les stories voisines. Contexte utile : AGENTS.md ; _bmad-output/planning-artifacts/epics.md (stories voisines) ; _bmad-output/planning-artifacts/architecture/architecture-eleyone.fr-2026-09-13/ARCHITECTURE-SPINE.md ; _bmad-output/implementation-artifacts/ (fichiers des stories déjà faites) ; scripts/ et docs/procedures/ déjà livrés.
 

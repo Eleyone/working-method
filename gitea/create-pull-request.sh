@@ -51,8 +51,7 @@ pending=$(git status --porcelain 2>/dev/null) || die "lecture de l'état du dép
 [[ -z $pending ]] || die "modifications non commitées : tout commiter avant d'ouvrir la PR."
 
 patterns_file=${PRIVATE_PATTERNS_FILE:-$root/docs/private/forbidden-patterns.txt}
-[[ -f $patterns_file ]] \
-  || die "fichier de motifs absent : l'ouverture d'une PR exige l'audit (docs/procedures/check-private.md)."
+require_patterns_file "$patterns_file" "l'ouverture d'une PR exige l'audit"
 
 git fetch --quiet origin "$base" 2>/dev/null || die "lecture de la branche $base sur la forge impossible."
 base_sha=$(git rev-parse FETCH_HEAD 2>/dev/null) || die "lecture de la branche $base récupérée impossible."

@@ -20,6 +20,7 @@ die() { printf '%s: %b\n' "$script_name" "$*" >&2; exit 2; } # audit impossible 
 readonly stories_dir="_bmad-output/implementation-artifacts"
 readonly status_file="$stories_dir/sprint-status.yaml"
 readonly ci_workflow=".gitea/workflows/checks.yaml"
+readonly max_timeline_pages=100
 readonly usage="usage : verify-and-merge-pr.sh <numéro de PR> [--merge]"
 
 require_tools
@@ -40,7 +41,7 @@ for tool in check-private sprint-consistency; do
   [[ -x $root/scripts/$tool.sh ]] || die "scripts/$tool.sh absent ou non exécutable."
 done
 patterns_file=${PRIVATE_PATTERNS_FILE:-$root/docs/private/forbidden-patterns.txt}
-[[ -f $patterns_file ]] || die "fichier de motifs absent : aucune fusion sans audit (docs/procedures/check-private.md)."
+require_patterns_file "$patterns_file" "aucune fusion sans audit"
 
 tmp=$(mktemp -d)
 worktree=""
@@ -72,9 +73,11 @@ read_pr() { # $1 fichier de réponse
   [[ $code == 200 ]] || die "PR n° $pr illisible (HTTP $code) : $(forge_message "$1")"
 }
 read_pr "$tmp/pr.json"
-fields=$(jq -er '[.state, (.draft | tostring), (.mergeable | tostring), (.merged | tostring), .base.ref, .head.ref, .head.sha, .title] | @tsv' "$tmp/pr.json" 2>/dev/null) \
+fields=$(jq -er '[.state, (.draft | tostring), (.mergeable | tostring), (.merged | tostring), .base.ref, .head.ref, .head.sha] | @tsv' "$tmp/pr.json" 2>/dev/null) \
   || die "réponse de la forge illisible pour la PR n° $pr."
-IFS=$'\t' read -r state draft mergeable merged base branch head_sha title <<< "$fields"
+IFS=$'\t' read -r state draft mergeable merged base branch head_sha <<< "$fields"
+# le titre est lu seul, en texte brut : @tsv échapperait l'antislash, que read ne décoderait pas
+title=$(jq -er '.title | strings' "$tmp/pr.json" 2>/dev/null) || die "titre de la PR n° $pr illisible."
 [[ $head_sha =~ ^[0-9a-f]{40}$ ]] || die "SHA de tête de la PR n° $pr illisible."
 
 printf '%s: PR n° %s « %s », %s → %s, tête %s\n' "$script_name" "$pr" "$title" "$branch" "$base" "${head_sha:0:7}"
@@ -155,16 +158,26 @@ status_commit_ok() { # $1 SHA relu, $2 SHA de tête
 if ! grep -qv '^_bmad-output/' <<< "$changed"; then
   report passe "revue LLM" "exception documentaire : tous les fichiers sont sous _bmad-output/, revue non exigée."
 else
+  # la liste des commentaires d'une issue ignore limit et page (bogue connu de Gitea) : les rapports
+  # sont lus dans la timeline de la PR, qui pagine, par pages de la taille maximale admise par la forge
+  code=$(gitea_api GET "/settings/api" "$tmp/settings.json")
+  [[ $code == 200 ]] || die "lecture des réglages de l'API impossible (HTTP $code) : $(forge_message "$tmp/settings.json")"
+  page_size=$(jq -er '.max_response_items' "$tmp/settings.json" 2>/dev/null) || die "réglages de l'API illisibles."
+  [[ $page_size =~ ^[1-9][0-9]*$ ]] || die "réglages de l'API illisibles."
   : > "$tmp/reviews.tsv"
   page=1
   while :; do
-    code=$(gitea_api GET "/repos/$gitea_canonical_repo/issues/$pr/comments?limit=50&page=$page" "$tmp/comments.json")
-    [[ $code == 200 ]] || die "lecture des commentaires de la PR impossible (HTTP $code) : $(forge_message "$tmp/comments.json")"
-    jq -r --arg u "$gitea_user" '.[] | select(.user.login == $u) | (.body | split("\n")[0]) | select(startswith("llm-review "))' \
-      "$tmp/comments.json" >> "$tmp/reviews.tsv" || die "commentaires de la PR illisibles."
-    count=$(jq 'length' "$tmp/comments.json" 2>/dev/null) || die "page de commentaires de la PR illisible."
-    [[ $count =~ ^[0-9]+$ ]] || die "page de commentaires de la PR illisible."
-    ((count == 50)) || break
+    ((page <= max_timeline_pages)) \
+      || die "timeline de la PR plus longue que $max_timeline_pages pages : lecture des rapports incomplète."
+    code=$(gitea_api GET "/repos/$gitea_canonical_repo/issues/$pr/timeline?limit=$page_size&page=$page" "$tmp/timeline.json")
+    [[ $code == 200 ]] || die "lecture de la timeline de la PR impossible (HTTP $code) : $(forge_message "$tmp/timeline.json")"
+    # au-delà de la dernière page, la forge répond null et non une liste vide
+    count=$(jq -e 'if type == "array" then length elif type == "null" then 0 else error end' "$tmp/timeline.json" 2>/dev/null) \
+      || die "page de la timeline de la PR illisible."
+    jq -r --arg u "$gitea_user" \
+      '(. // [])[] | select(.type == "comment" and .user.login == $u) | ((.body // "") | split("\n")[0]) | select(startswith("llm-review "))' \
+      "$tmp/timeline.json" >> "$tmp/reviews.tsv" || die "timeline de la PR illisible."
+    ((count == page_size)) || break
     page=$((page + 1))
   done
   last_report() { # $1 SHA : dernière ligne llm-review pour ce SHA et cette base, champs comparés à l'identique
@@ -218,10 +231,13 @@ ci_fields=$(jq -er '[.state // "", (.total_count // 0 | tostring)] | @tsv' "$tmp
 IFS=$'\t' read -r ci_state ci_total <<< "$ci_fields"
 if ((ci_total > 0)) && [[ $ci_state == success ]]; then
   report passe "CI" "verte sur la tête."
-elif ((ci_total > 0)) && [[ $ci_state != pending ]]; then
+elif ((ci_total > 0)) && [[ $ci_state == pending ]]; then
+  # même pendant l'amorçage : une CI qui tourne n'est pas une CI absente
+  report bloque "CI" "en cours sur la tête : relancer l'audit quand elle est terminée."
+elif ((ci_total > 0)); then
   report bloque "CI" "état $ci_state sur la tête."
 elif git cat-file -e "$base_sha:$ci_workflow" 2>/dev/null; then
-  report bloque "CI" "$ci_workflow existe sur la base : CI $([[ $ci_total == 0 ]] && echo absente || echo "en cours") sur la tête, absent bloque (story 3.16)."
+  report bloque "CI" "$ci_workflow existe sur la base : CI absente sur la tête, absent bloque (story 3.16)."
 else
   # règle d'amorçage : le substitut est le garde-fou déjà lancé, puis scripts/check.sh sur la tête s'il existe
   substitute="check-private.sh history (verrou garde-fou)"

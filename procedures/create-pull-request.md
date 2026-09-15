@@ -6,7 +6,7 @@ Chaque story ou correctif arrive en revue par une pull request ouverte sur la fo
 
 - `jq` et `curl` installés. Sans `jq`, le script s'arrête et indique `sudo apt install jq`.
 - `.env` à la racine du dépôt, avec `GITEA_URL`, `GITEA_USER` et `GITEA_TOKEN` : procédure `gitea-token.md`.
-- Le fichier de motifs (`docs/private/forbidden-patterns.txt`, ou celui que désigne `PRIVATE_PATTERNS_FILE`) : ouvrir une PR exige un audit, pas un passage « chemins seulement » (`check-private.md`).
+- Le fichier de motifs (`docs/private/forbidden-patterns.txt`, ou celui que désigne `PRIVATE_PATTERNS_FILE`), avec au moins un motif : ouvrir une PR exige un audit, pas un passage « chemins seulement » (`check-private.md`).
 - Une branche `feat/*`, `fix/*`, `chore/*` ou `docs/*`, avec tout commité, poussée sur la forge au même commit que la branche locale.
 
 ## Ouvrir la PR
@@ -43,7 +43,7 @@ Dans l'ordre. Tout refus arrête le script **avant la moindre écriture sur la f
 3. Le dépôt distant `origin` est bien `Eleyone/eleyone.fr`, nom canonique écrit dans `scripts/lib/gitea.sh`.
 4. Le préfixe de la branche donne la base (tableau ci-dessus).
 5. Aucune modification n'est en attente, fichiers non suivis compris.
-6. Le fichier de motifs existe.
+6. Le fichier de motifs existe et contient au moins un motif.
 7. La branche est poussée sur la forge au même commit que la branche locale ; la base est lue sur la forge.
 8. `scripts/check-private.sh history` passe sur les commits de la branche, avec la liste des motifs.
 9. Ni le titre ni le corps ne contiennent de motif privé. Un refus ne montre ni le motif ni le contenu.
