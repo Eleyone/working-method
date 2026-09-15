@@ -106,7 +106,9 @@ while IFS=$'\t' read -r key value; do
     fi
     files=$((files + 1))
     # seule la première ligne « status: » compte, quelle que soit sa casse, pour détecter une ligne mal écrite
-    header=$(read_file "$path" | grep -m 1 -iE '^[[:space:]]*status[[:space:]]*:' || true)
+    # le fichier est lu d'abord : une lecture impossible arrête le script au lieu de passer pour « Status: absent »
+    content=$(read_file "$path") || die "lecture de $path impossible $where : aucune conclusion sur la cohérence."
+    header=$(grep -m 1 -iE '^[[:space:]]*status[[:space:]]*:' <<< "$content" || true)
     header=${header%$'\r'}
     if [[ -z $header ]]; then
       gap "story $key : ligne « Status: » absente de $path."

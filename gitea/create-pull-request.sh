@@ -81,9 +81,12 @@ page=1
 while :; do
   code=$(gitea_api GET "/repos/$gitea_canonical_repo/pulls?state=open&limit=50&page=$page" "$tmp/open.json")
   [[ $code == 200 ]] || die "lecture des PR ouvertes impossible (HTTP $code) : $(forge_message "$tmp/open.json")"
-  existing=$(jq -r --arg b "$branch" '[.[] | select(.head.ref == $b) | .number] | first // empty' "$tmp/open.json")
+  existing=$(jq -r --arg b "$branch" '[.[] | select(.head.ref == $b) | .number] | first // empty' "$tmp/open.json" 2>/dev/null) \
+    || die "liste des PR ouvertes illisible."
   [[ -z $existing ]] || die "une PR est déjà ouverte pour $branch : n° $existing."
-  (($(jq 'length' "$tmp/open.json") == 50)) || break
+  count=$(jq 'length' "$tmp/open.json" 2>/dev/null) || die "liste des PR ouvertes illisible."
+  [[ $count =~ ^[0-9]+$ ]] || die "liste des PR ouvertes illisible."
+  ((count == 50)) || break
   page=$((page + 1))
 done
 
