@@ -40,6 +40,7 @@ Code de sortie : `0` tous les cas réussis ; `1` un cas échoue (le script nomme
 | `jq @tsv` puis `read -r` | l'antislash reste doublé | lire un texte libre seul, avec `jq -r` | story 0.8 (D5) |
 | pagination de l'API de la forge | la liste des commentaires d'une issue ignore `limit` et `page` ; la timeline répond `null` au-delà de la dernière page | timeline, page `null` lue comme vide, plafond de pages ; essayer contre la forge tout comportement supposé | story 0.8 (D1) |
 | `git ls-files`, `git ls-tree`, `git grep -- .` | relatifs au dossier courant : lancés depuis un sous-dossier, ils ne voient que lui | se placer à la racine du dépôt | story 0.8 (D3) |
+| insertion par remplacement de texte dans un document | un titre court est contenu dans un titre plus long (`## Epic 2 …` est une sous-chaîne de `### Epic 2 …`) : l'insertion frappe deux endroits et duplique un bloc entier | ancrer sur une chaîne unique **et** encadrée (sauts de ligne compris), vérifier qu'elle n'apparaît qu'une fois avant d'écrire, puis recompter les titres après écriture | story 1.5 (S5 de la rétro de l'epic 1) |
 | fichier de configuration présent mais vide | vérifier l'existence ne suffit pas : un fichier de motifs sans motif désactivait l'audit | vérifier qu'il contient au moins une entrée | story 0.8 (D2) |
 
 ## En cas d'échec d'un test
