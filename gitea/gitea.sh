@@ -15,6 +15,8 @@
 # Procédures : docs/procedures/gitea-token.md, docs/procedures/create-pull-request.md,
 # docs/procedures/llm-review.md, docs/procedures/verify-and-merge-pr.md
 
+. "$(dirname "${BASH_SOURCE[0]}")/dotenv.sh"
+
 readonly gitea_canonical_repo="Eleyone/eleyone.fr"
 readonly gitea_token_procedure="docs/procedures/gitea-token.md"
 
@@ -25,32 +27,25 @@ require_tools() {
   command -v curl >/dev/null 2>&1 || die "curl est introuvable."
 }
 
-# .env est lu ligne par ligne, jamais avec source. Une valeur entre guillemets doubles ou simples
-# perd ses guillemets ; une valeur sans guillemets perd un commentaire « # … » précédé d'une espace.
+# .env est lu par le lecteur commun de scripts/lib/dotenv.sh, jamais avec source (story 2.4).
 # Les variables ne sont pas exportées : aucun sous-processus n'en hérite.
 load_gitea_env() {
-  local env_file=$1 line key value
+  local env_file=$1 line key value lines
   [[ -f $env_file ]] || die ".env absent à la racine du dépôt. Procédure : $gitea_token_procedure"
   gitea_url="" gitea_user="" gitea_token=""
-  while IFS= read -r line || [[ -n $line ]]; do
-    line=${line%$'\r'}
-    case $line in
-      GITEA_URL=*|GITEA_USER=*|GITEA_TOKEN=*) ;;
-      *) continue ;;
-    esac
+  # la liste est lue dans une variable d'abord : « done < <(fonction) » masquerait l'échec du lecteur
+  # et la boucle tournerait sur une liste vide (piège connu, docs/procedures/shell-scripts.md)
+  lines=$(dotenv_read "$env_file" GITEA_) || die ".env illisible. Procédure : $gitea_token_procedure"
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
     key=${line%%=*}
     value=${line#*=}
-    case $value in
-      \"*) value=${value#\"}; value=${value%%\"*} ;;
-      \'*) value=${value#\'}; value=${value%%\'*} ;;
-      *) value=${value%%[[:space:]]#*}; value=${value%"${value##*[![:space:]]}"} ;;
-    esac
     case $key in
       GITEA_URL) gitea_url=$value ;;
       GITEA_USER) gitea_user=$value ;;
       GITEA_TOKEN) gitea_token=$value ;;
     esac
-  done < "$env_file"
+  done <<< "$lines"
   [[ -n $gitea_url ]] || die "GITEA_URL absente de .env. Procédure : $gitea_token_procedure"
   [[ -n $gitea_user ]] || die "GITEA_USER absente de .env. Procédure : $gitea_token_procedure"
   [[ -n $gitea_token ]] || die "GITEA_TOKEN absente de .env. Procédure : $gitea_token_procedure"
