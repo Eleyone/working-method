@@ -5,7 +5,8 @@
 #   scripts/tests/run.sh <fichier>...     les cas de ces fichiers de test seulement
 #
 # Chaque cas tourne dans son propre processus bash : set -e y reste actif, alors qu'il serait suspendu
-# dans un if ou derrière ||. Aucun réseau, ni .env ni docs/private/. Dépendances : bash, git, jq,
+# dans un if ou derrière ||. Aucun réseau, ni .env ni docs/private/. La suite ne touche jamais public/
+# ni build/ du dépôt : leur état est relevé avant et après, et un écart fait échouer. Dépendances : bash, git, jq,
 # grep GNU et outils de base, présents sur le poste et dans CHECK_IMAGE.
 # Code de sortie : 0 tous les cas réussis ; 1 un cas échoue ; 2 tests impossibles à lancer.
 # Procédure : docs/procedures/shell-scripts.md
@@ -15,13 +16,29 @@ tests_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$tests_dir/../.." && pwd)
 cd "$root"
 
-for tool in bash git jq grep awk sed mktemp; do
+for tool in bash git jq grep awk sed mktemp find sort cmp; do
   command -v "$tool" >/dev/null 2>&1 || { echo "tests: $tool introuvable." >&2; exit 2; }
 done
 
 if (($#)); then files=("$@"); else files=("$tests_dir"/test-*.sh); fi
 logs=$(mktemp -d)
 trap 'rm -rf "$logs"' EXIT
+
+# État des sorties de build du dépôt : un cas qui lance un script destructeur sans racine jetable les
+# effacerait en silence (rétrospective de l'epic 2, F1 : build.sh vide sa destination avant Hugo).
+outputs_state() { # $1 = fichier où écrire l'état
+  local dir
+  : > "$1" || return 1
+  for dir in public build; do
+    if [[ -e $dir ]]; then
+      find "$dir" -printf '%p\t%y\t%s\t%T@\n' >> "$1" || return 1
+    else
+      printf '%s\tabsent\n' "$dir" >> "$1" || return 1
+    fi
+  done
+  LC_ALL=C sort -o "$1" "$1"
+}
+outputs_state "$logs/avant" || { echo "tests: état de public/ et build/ illisible." >&2; exit 2; }
 
 total=0
 for file in "${files[@]}"; do
@@ -40,4 +57,9 @@ for file in "${files[@]}"; do
     total=$((total + 1))
   done <<< "$cases"
 done
+outputs_state "$logs/apres" || { echo "tests: état de public/ et build/ illisible." >&2; exit 2; }
+if ! cmp -s "$logs/avant" "$logs/apres"; then
+  echo "tests: ÉCHEC la suite a modifié public/ ou build/ du dépôt : un cas lance un script sans racine jetable." >&2
+  exit 1
+fi
 printf 'tests: %s cas réussis.\n' "$total"
