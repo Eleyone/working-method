@@ -193,7 +193,10 @@ else
     substitute="$substitute, scripts/check.sh sur la tête"
     worktree="$tmp/copie"
     git worktree add --quiet --detach "$worktree" "$head_sha" 2>/dev/null || die "création de la copie de la tête impossible."
-    if ! check_out=$(cd "$worktree" && scripts/check.sh 2>&1); then
+    # La copie n'a ni .tools/ ni .env, tous deux ignorés par git : les binaires épinglés viennent du
+    # dépôt de travail, et les valeurs légales du fichier factice commité (AD-9). Sans cela, check.sh
+    # n'y trouverait aucun Hugo et le substitut bloquerait toute PR (entrée reportée de la story 0.7).
+    if ! check_out=$(cd "$worktree" && TOOLS_LOCAL_DIR="$root/.tools" scripts/check.sh 2>&1); then
       substitute_ok=0
     fi
   fi
