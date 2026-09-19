@@ -9,6 +9,8 @@
 # ni build/ du dépôt : leur état est relevé avant et après, et un écart fait échouer. Dépendances : bash, git, jq,
 # grep GNU et outils de base, présents sur le poste et dans CHECK_IMAGE.
 # Code de sortie : 0 tous les cas réussis ; 1 un cas échoue ; 2 tests impossibles à lancer.
+# Un cas qui rend 3 est sans objet dans cet environnement (skip_case) : il est compté à part et sa
+# raison s'affiche dans le résumé.
 # Procédure : docs/procedures/shell-scripts.md
 set -euo pipefail
 
@@ -41,6 +43,7 @@ outputs_state() { # $1 = fichier où écrire l'état
 outputs_state "$logs/avant" || { echo "tests: état de public/ et build/ illisible." >&2; exit 2; }
 
 total=0
+ignores=()
 for file in "${files[@]}"; do
   [[ -f $file ]] || { echo "tests: fichier de test absent : $file" >&2; exit 2; }
   label=${file#"$root"/}
@@ -49,6 +52,13 @@ for file in "${files[@]}"; do
   while IFS= read -r name; do
     rc=0
     bash "$file" "$name" > "$logs/sortie" 2>&1 || rc=$?
+    # code 3 : cas sans objet ici (skip_case). Il est compté à part et sa raison s'affiche, pour
+    # qu'une couverture moindre ne passe jamais inaperçue.
+    if ((rc == 3)); then
+      raison=$(sed -n 's/^IGNORÉ : //p' "$logs/sortie" | head -n 1)
+      ignores+=("$label : $name — ${raison:-sans raison donnée}")
+      continue
+    fi
     if ((rc != 0)); then
       printf 'tests: ÉCHEC %s : %s (code %s)\n' "$label" "$name" "$rc" >&2
       sed 's/^/  /' "$logs/sortie" >&2
@@ -62,4 +72,9 @@ if ! cmp -s "$logs/avant" "$logs/apres"; then
   echo "tests: ÉCHEC la suite a modifié public/ ou build/ du dépôt : un cas lance un script sans racine jetable." >&2
   exit 1
 fi
-printf 'tests: %s cas réussis.\n' "$total"
+if ((${#ignores[@]})); then
+  printf 'tests: %s cas réussis, %s ignorés :\n' "$total" "${#ignores[@]}"
+  printf '  %s\n' "${ignores[@]}"
+else
+  printf 'tests: %s cas réussis.\n' "$total"
+fi

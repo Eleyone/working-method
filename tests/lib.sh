@@ -47,6 +47,21 @@ commit_all() { # $1 message ; commit de tout le dépôt de test, affiche son SHA
   git -C "$work/depot" rev-parse HEAD
 }
 
+# Un cas sans objet dans cet environnement sort en code 3 : run.sh le compte comme ignoré et affiche
+# sa raison. Il n'échoue pas — et il ne se tait pas non plus, sans quoi la couverture baisserait en
+# silence là où la suite tourne autrement (constat de la première exécution en CI, story 3.13).
+skip_case() { # $1 raison
+  printf 'IGNORÉ : %s\n' "$1"
+  exit 3
+}
+
+# root lit tout fichier, quelles que soient ses permissions : un cas qui repose sur « chmod 000 » y
+# constaterait l'inverse de ce qu'il vérifie. Le contrat lui-même (code 1 de xmllint, de grep ou de
+# la lecture d'une liste = anomalie) est vérifié sans permissions par test-checks-lib.sh.
+skip_if_root() { # $1 ce que le cas rend illisible
+  [[ $(id -u) != 0 ]] || skip_case "root lit ${1:-le fichier} malgré ses permissions"
+}
+
 run_case() {
   if [[ ${1:-} == --list ]]; then
     declare -F | awk '{ print $3 }' | grep '^case_' | sed 's/^case_//'
