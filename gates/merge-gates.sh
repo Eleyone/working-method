@@ -112,23 +112,45 @@ status_commit_ok() { # $1 SHA relu, $2 SHA de tête, $3 clé de la story, $4 sui
   return 0
 }
 
-# Une CI qui tourne n'est jamais une CI absente, même pendant l'amorçage. « amorçage » : aucun statut sur la
-# tête et aucun workflow sur la base ; le script lance alors le substitut.
+# Une CI qui tourne n'est jamais une CI absente, même pendant l'amorçage. « amorçage » : aucun statut
+# du workflow des contrôles sur la tête et aucun workflow sur la base ; le script lance le substitut.
+#
+# Seuls les statuts du workflow « checks » comptent. Gitea nomme un contexte « <workflow> / <job>
+# (<événement>) », par exemple « checks / checks (pull_request) », et la clé de l'état d'un statut est
+# « status » — « state » n'existe qu'au niveau combiné (constaté sur un vrai commit, story 3.16).
+# Juger l'état combiné reviendrait à laisser n'importe quel autre workflow verrouiller la fusion :
+# l'agent de parité (AD-16) commente sans bloquer, et son statut ne doit pas décider d'une fusion.
+# La valeur de repli d'un statut sans état s'écrit en un seul mot : la boucle qui nomme les états
+# fautifs découpe sur les espaces, et « sans état » y compterait pour deux (revue de la PR n° 52).
 ci_gate() { # $1 réponse de l'état combiné de la CI, $2 1 si le workflow existe sur la base, sinon 0, $3 chemin du workflow
-  local state total
-  state=$(jq -er '.state // "" | strings' "$1" 2>/dev/null) || return 2
-  total=$(jq -er '.total_count // 0 | numbers' "$1" 2>/dev/null) || return 2
-  [[ $total =~ ^[0-9]+$ ]] || return 2
-  if ((total > 0)) && [[ $state == success ]]; then
-    printf 'passe\tverte sur la tête.\n'
-  elif ((total > 0)) && [[ $state == pending ]]; then
+  local etats
+  etats=$(jq -er '
+      [ (.statuses // [])[]
+        | select((.context // "") == "checks" or ((.context // "") | startswith("checks /")))
+        | (.status // "sans-état") ]
+      | join(" ")' "$1" 2>/dev/null) || return 2
+  if [[ -z $etats ]]; then
+    if [[ $2 == 1 ]]; then
+      printf 'bloque\t%s existe sur la base : aucun statut du workflow « checks » sur la tête (story 3.16).\n' "$3"
+    else
+      printf "amorçage\t%s absent de la base : règle d'amorçage.\n" "$3"
+    fi
+    return 0
+  fi
+  if [[ " $etats " == *" pending "* ]]; then
     printf "bloque\ten cours sur la tête : relancer l'audit quand elle est terminée.\n"
-  elif ((total > 0)); then
-    printf 'bloque\tétat %s sur la tête.\n' "$state"
-  elif [[ $2 == 1 ]]; then
-    printf 'bloque\t%s existe sur la base : CI absente sur la tête, absent bloque (story 3.16).\n' "$3"
+  elif [[ $etats =~ ^(success )*success$ ]]; then
+    printf 'passe\tverte sur la tête.\n'
   else
-    printf "amorçage\t%s absent de la base : règle d'amorçage.\n" "$3"
+    # Les états fautifs sont nommés, les verts écartés : avec deux jobs, « success failure » se lisait
+    # mal (constat de la revue de la PR n° 52). « cancelled », « skipped » ou « warning » bloquent
+    # comme un échec, et aucun état inconnu n'est traité par omission.
+    local fautifs="" etat
+    for etat in $etats; do
+      [[ $etat != success ]] || continue
+      [[ " $fautifs " == *" $etat "* ]] || fautifs+="${fautifs:+ }$etat"
+    done
+    printf 'bloque\tétat %s sur la tête.\n' "$fautifs"
   fi
 }
 

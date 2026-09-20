@@ -76,24 +76,87 @@ EOF
   assert_eq "" "$out" "autre SHA"
 }
 
-ci_case() { # $1 état, $2 nombre de statuts, $3 workflow sur la base, $4 décision attendue, $5 libellé
-  printf '{"state": "%s", "total_count": %s}\n' "$1" "$2" > "$work/ci.json"
-  run ci_gate "$work/ci.json" "$3" .gitea/workflows/checks.yaml
-  assert_eq 0 "$rc" "$5 : code de retour"
-  assert_eq "$4" "${out%%$'\t'*}" "$5"
+# Réponse de la forge, dans sa vraie forme : l'état de chaque statut est sous « status », le contexte
+# s'écrit « <workflow> / <job> (<événement>) », et « state » n'existe qu'au niveau combiné.
+ci_reponse() { # $1… = « <contexte>=<état> » ; sans argument, aucun statut
+  local entrees="" arg
+  for arg in "$@"; do
+    entrees+="${entrees:+,}$(printf '{"context": "%s", "status": "%s"}' "${arg%%=*}" "${arg#*=}")"
+  done
+  printf '{"state": "peu importe", "total_count": %s, "statuses": [%s]}\n' "$#" "$entrees" > "$work/ci.json"
+}
+
+ci_case() { # $1 workflow sur la base, $2 décision attendue, $3 libellé ; la réponse est déjà écrite
+  run ci_gate "$work/ci.json" "$1" .gitea/workflows/checks.yaml
+  assert_eq 0 "$rc" "$3 : code de retour"
+  assert_eq "$2" "${out%%$'\t'*}" "$3"
 }
 
 case_verrou_ci() {
-  ci_case success 2 0 passe "CI verte"
-  ci_case pending 2 0 bloque "CI en cours pendant l'amorçage (S5)"
-  ci_case pending 2 1 bloque "CI en cours, workflow sur la base"
-  ci_case failure 1 0 bloque "CI en échec"
-  ci_case error 1 1 bloque "CI en erreur"
-  ci_case pending 0 0 amorçage "aucun statut, workflow absent de la base"
-  ci_case pending 0 1 bloque "aucun statut, workflow sur la base (story 3.16)"
+  ci_reponse "checks / checks (pull_request)=success"; ci_case 1 passe "CI verte"
+  ci_reponse "checks / checks (push)=success" "checks / checks (pull_request)=success"
+  ci_case 1 passe "deux statuts du même workflow, tous verts"
+  ci_reponse "checks / checks (pull_request)=pending"; ci_case 0 bloque "CI en cours pendant l'amorçage (S5)"
+  ci_reponse "checks / checks (pull_request)=pending"; ci_case 1 bloque "CI en cours, workflow sur la base"
+  ci_reponse "checks / checks (pull_request)=success" "checks / checks (push)=pending"
+  ci_case 1 bloque "un statut en cours suffit à bloquer"
+  ci_reponse "checks / checks (pull_request)=failure"; ci_case 0 bloque "CI en échec"
+  ci_reponse "checks / checks (pull_request)=error"; ci_case 1 bloque "CI en erreur"
+  ci_reponse "checks / checks (pull_request)=cancelled"; ci_case 1 bloque "run annulé : bloque comme un échec"
+  ci_reponse "checks / checks (pull_request)=skipped"; ci_case 1 bloque "run ignoré : bloque aussi"
+  ci_reponse; ci_case 0 amorçage "aucun statut, workflow absent de la base"
+  ci_reponse; ci_case 1 bloque "aucun statut, workflow sur la base (story 3.16)"
+}
+
+case_verrou_ci_echec_partiel() {
+  # Deux jobs du même workflow, l'un vert l'autre non : le verrou bloque, et ne nomme que l'état
+  # fautif — « état success failure » se lisait mal (constat de la revue de la PR n° 52).
+  ci_reponse "checks / un (pull_request)=success" "checks / deux (pull_request)=failure"
+  ci_case 1 bloque "un job en échec bloque, même si l'autre est vert"
+  assert_eq "bloque	état failure sur la tête." "$out" "seul l'état fautif est nommé"
+  ci_reponse "checks / un (pull_request)=failure" "checks / deux (pull_request)=cancelled"
+  ci_case 1 bloque "deux états fautifs"
+  assert_contains "failure cancelled" "$out" "les deux sont nommés, une fois chacun"
+  ci_reponse "checks / un (pull_request)=failure" "checks / deux (pull_request)=failure"
+  ci_case 1 bloque "deux fois le même état"
+  assert_eq "bloque	état failure sur la tête." "$out" "il n'est nommé qu'une fois"
+}
+
+case_verrou_ci_statut_sans_etat() {
+  # Gitea n'est pas censé rendre un statut sans état ; s'il le faisait, le verrou bloque et le dit
+  # en un seul mot (la boucle des états fautifs découpe sur les espaces).
+  printf '{"statuses": [{"context": "checks / checks (push)"}]}\n' > "$work/ci.json"
+  ci_case 1 bloque "un statut sans état bloque"
+  assert_eq "bloque	état sans-état sur la tête." "$out" "l'état manquant est nommé en un seul mot"
+}
+
+case_verrou_ci_nomme_le_workflow() {
+  # AD-16 : l'agent de parité commente sans bloquer. Son statut ne doit pas décider d'une fusion,
+  # ni en la bloquant, ni en la permettant (constat de la revue de spec de la story 3.16).
+  ci_reponse "parity-agent / agent (pull_request)=failure" "checks / checks (pull_request)=success"
+  ci_case 1 passe "un autre workflow en échec ne bloque pas"
+  ci_reponse "parity-agent / agent (pull_request)=success"
+  ci_case 1 bloque "un autre workflow vert ne remplace pas le workflow des contrôles"
+  assert_contains "aucun statut du workflow" "$out" "le message dit ce qui manque"
+  ci_reponse "checks-autre / job (push)=success"
+  ci_case 1 bloque "un workflow dont le nom commence par « checks » sans être lui ne compte pas"
+}
+
+case_verrou_ci_deux_absences_distinctes() {
+  # Les deux « absent » ne se confondent pas à l'écran : l'un est l'amorçage, l'autre un blocage.
+  ci_reponse; ci_case 0 amorçage "amorçage"
+  assert_contains "absent de la base" "$out" "l'amorçage dit que le workflow manque à la base"
+  ci_reponse; ci_case 1 bloque "workflow sur la base"
+  assert_contains "existe sur la base" "$out" "le blocage dit que le workflow est là"
+}
+
+case_verrou_ci_reponse_illisible() {
   printf '[]\n' > "$work/ci.json"
   run ci_gate "$work/ci.json" 0 .gitea/workflows/checks.yaml
   assert_eq 2 "$rc" "réponse illisible"
+  printf 'pas du json\n' > "$work/ci.json"
+  run ci_gate "$work/ci.json" 0 .gitea/workflows/checks.yaml
+  assert_eq 2 "$rc" "réponse qui n'est pas du JSON"
 }
 
 case_titre_de_fusion() {
