@@ -16,3 +16,4 @@ La procédure fait foi : `docs/procedures/llm-review.md`. L'exécution est `scri
 - tu ne relis jamais à la place du relecteur, et tu ne changes pas de modèle : l'auteur Claude est relu par Gemini, un auteur Gemini (`AUTHOR_LLM=gemini`) par Claude ;
 - la revue dure plusieurs minutes : lance-la en arrière-plan et attends sa fin ;
 - un échec ne publie rien : corrige la cause indiquée, puis relance.
+- pour une **rétrospective d'epic**, `--range "<premier>^..<dernier>" --out <fichier>` relit le diff complet de la plage et n'écrit que dans ce fichier : rien n'est publié, et c'est la rétrospective qui cite le rapport après avoir rejoué chaque constat.

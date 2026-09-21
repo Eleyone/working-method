@@ -57,6 +57,21 @@ Le relecteur applique le skill de revue BMAD `bmad-review`, qu'il lit comme un f
 
 La revue dure plusieurs minutes, jusqu'à 15 : un agent la lance en arrière-plan et attend sa fin.
 
+## Revue d'une plage, pour une rétrospective
+
+```bash
+scripts/llm-review.sh --range "<premier>^..<dernier>" --out <fichier>
+```
+
+Relit le **diff complet d'une plage de commits** — un epic entier — pour trouver ce qu'aucune revue de story ne pouvait voir : une règle appliquée différemment d'une story à l'autre, du code dupliqué entre deux stories, une décision contredite par une story suivante, une couverture de test absente à leur frontière, un commentaire devenu faux, du code mort. Angles : `adversarial`, `edge-case-hunter`, `verification-gap`.
+
+- **Rien n'est publié** : pas de commentaire de PR, pas de fichier de story. Le rapport va dans le fichier désigné par `--out`, ou sur la sortie standard. C'est la rétrospective qui le cite, constat par constat, après les avoir rejoués.
+- **La plage est écrite telle qu'on la veut** : `A..B` exclut `A`, `A^..B` l'inclut. Pour un epic, c'est le commit qui précède la première story jusqu'au dernier.
+- **Le diff écarte `_bmad-output/`** : le relecteur a les artefacts de cadrage dans la copie, au commit de fin, et leur volume noierait le code.
+- **La copie isolée est celle du commit de fin**, comme pour les autres modes, avec le même garde-fou lancé sur la plage avant l'envoi et le même jeton de lecture.
+
+Ce mode remplace le script jetable écrit deux fois de suite pour les rétrospectives des epics 2 et 3. À sa première exécution, il a trouvé quatre défauts réels dans du code déjà relu PR par PR — dont une enveloppe qui promettait d'arrêter le script et ne le pouvait pas en tête de pipeline.
+
 ## Rapports dans le fichier de story
 
 Le script ajoute chaque rapport au fichier de story de l'arbre de travail, sans le commiter. Un rapport n'est jamais modifié ni supprimé : l'auteur n'ajoute que ses décisions, sous lui.

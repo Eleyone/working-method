@@ -12,8 +12,12 @@
 #       et ramènerait le « || true » que ces enveloppes existent pour supprimer. Qui veut
 #       distinguer les deux emploie shell_grep_status.
 #   shell_grep <arguments de grep…>
-#       la même distinction, mais le résultat va sur la sortie standard : réservé aux pipelines,
-#       où une variable n'aurait pas de sens.
+#       la même distinction, mais le résultat va sur la sortie standard : pour une condition
+#       (« if shell_grep -q … »), jamais **en tête d'un pipeline**. Un « exit » dans un élément de
+#       pipeline ne quitte que son sous-shell : la promesse d'arrêt y serait fausse, et un
+#       « || true » final la retournerait en succès. Dans un pipeline, lire d'abord dans une
+#       variable avec shell_grep_into, puis l'injecter par « <<< ». Un cas de test refuse tout
+#       « shell_grep … | » du dépôt (constat de la première revue de plage, 21/09/2026).
 #
 # Pourquoi une variable plutôt qu'une sortie : appelée dans « $(…) », une fonction ne peut pas
 # arrêter son appelant — son « exit » ne quitte que le sous-shell, et l'erreur se perd (piège connu,

@@ -3,6 +3,9 @@
 #
 #   llm-review.sh --story <n.m> [--context <fichier>]    revue de spec, avant l'implémentation
 #   llm-review.sh <numéro de PR> [--context <fichier>]   revue du code, verdict publié sur la PR
+#   llm-review.sh --range <plage> [--out <fichier>]      revue d'un diff d'epic, pour une rétrospective :
+#                                                        rien n'est publié, le rapport va sur la sortie
+#                                                        standard ou dans le fichier désigné
 #
 # AUTHOR_LLM=claude (défaut) → relecteur gemini-3.1-pro-high ; AUTHOR_LLM=gemini → claude-opus-4-6-thinking.
 # Le relecteur applique le skill bmad-review dans une copie isolée hors du dépôt : un export du commit
@@ -26,22 +29,34 @@ readonly reviewer_for_gemini="claude-opus-4-6-thinking"
 readonly review_timeout=900
 readonly stories_dir="_bmad-output/implementation-artifacts"
 readonly epics_file="_bmad-output/planning-artifacts/epics.md"
-readonly usage="usage : llm-review.sh --story <n.m> [--context <fichier>] | llm-review.sh <numéro de PR> [--context <fichier>]"
+readonly usage="usage : llm-review.sh --story <n.m> [--context <fichier>] | llm-review.sh <numéro de PR> [--context <fichier>] | llm-review.sh --range <plage> [--out <fichier>]"
 
 require_tools
 command -v agy >/dev/null 2>&1 || die "agy est introuvable : prérequis du poste de développement (AD-24)."
 command -v timeout >/dev/null 2>&1 || die "timeout est introuvable."
 
-story="" pr="" context_file=""
+story="" pr="" context_file="" range="" out_file=""
 while (($#)); do
   case $1 in
     --story) (($# >= 2)) && [[ -z $story ]] || die "$usage"; story=$2; shift 2 ;;
+    --range) (($# >= 2)) && [[ -z $range ]] || die "$usage"; range=$2; shift 2 ;;
+    --out) (($# >= 2)) && [[ -z $out_file ]] || die "$usage"; out_file=$2; shift 2 ;;
     --context) (($# >= 2)) && [[ -z $context_file ]] || die "$usage"; context_file=$2; shift 2 ;;
     *) [[ -z $pr && $1 =~ ^[1-9][0-9]*$ ]] || die "$usage"; pr=$1; shift ;;
   esac
 done
-[[ -n $story || -n $pr ]] || die "$usage"
-[[ -z $story || -z $pr ]] || die "$usage"
+modes=0
+[[ -z $story ]] || modes=$((modes + 1))
+[[ -z $pr ]] || modes=$((modes + 1))
+[[ -z $range ]] || modes=$((modes + 1))
+((modes == 1)) || die "$usage"
+[[ -z $out_file || -n $range ]] || die "--out ne sert qu'avec --range : ailleurs, le rapport est publié."
+if [[ -n $out_file ]]; then
+  [[ $out_file == /* ]] || out_file="$PWD/$out_file"
+  # « touch » plutôt que « : > » : la revue dure plusieurs minutes, et vider le fichier tout de
+  # suite perdrait un rapport précédent si elle échoue en route (constat de la revue de la PR n° 56).
+  touch "$out_file" || die "fichier de sortie impossible à écrire : $out_file."
+fi
 [[ -z $story || $story =~ ^[0-9]+\.[0-9]+[a-z]?$ ]] || die "numéro de story attendu, par exemple 0.6."
 if [[ -n $context_file ]]; then
   [[ $context_file == /* ]] || context_file="$PWD/$context_file"
@@ -131,6 +146,19 @@ if [[ -n $pr ]]; then
   template="$root/scripts/llm-review-prompt.md"
   audit_range=("$base_sha..$head_sha")
   story_num=$(story_number_from_branch "$branch") || story_num=""
+elif [[ -n $range ]]; then
+  # Une plage déjà dans le dépôt : rien n'est lu sur la forge, et le relecteur voit le dépôt au
+  # commit de fin. « A^..B » et « A..B » sont acceptés tels quels — c'est l'appelant qui sait s'il
+  # veut inclure le premier commit.
+  git rev-list --quiet "$range" -- 2>/dev/null || die "plage illisible : $range."
+  head_sha=$(git rev-parse --verify --quiet "${range##*..}^{commit}") \
+    || die "fin de plage introuvable : ${range##*..}."
+  range_count=$(git rev-list --count "$range") || die "comptage de la plage impossible."
+  ((range_count > 0)) || die "plage vide : $range."
+  lenses="adversarial, edge-case-hunter, verification-gap"
+  content_name=REVIEW-RANGE.md
+  template="$root/scripts/llm-review-range-prompt.md"
+  audit_range=("$range")
 else
   git fetch --quiet origin dev 2>/dev/null || die "lecture de dev sur la forge impossible."
   head_sha=$(git rev-parse --verify --quiet "refs/remotes/origin/dev^{commit}") || die "branche dev introuvable."
@@ -168,6 +196,20 @@ canary=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
 if [[ -n $pr ]]; then
   printf '# jeton-de-lecture: %s\n' "$canary" > "$copy/$content_name"
   git diff "$base_sha...$head_sha" >> "$copy/$content_name" || die "diff de la PR impossible."
+elif [[ -n $range ]]; then
+  # Les artefacts de cadrage sont écartés du diff : le relecteur les a déjà dans la copie, au
+  # commit de fin, et leur churn noierait le code. Les fusions sont écartées de la liste des
+  # commits : une fusion en squash ne dit rien de plus que le commit qu'elle apporte.
+  {
+    printf '<!-- jeton-de-lecture: %s -->\n\n# Diff complet de la plage %s\n\n' "$canary" "$range"
+    printf '## Commits (%s)\n\n' "$range_count"
+    git log --oneline --no-merges "$range" || die "liste des commits impossible."
+    printf '\n## Fichiers modifiés\n\n'
+    git diff --stat "$range" -- . ':(exclude)_bmad-output' || die "résumé du diff impossible."
+    printf '\n## Diff\n\n```diff\n'
+    git diff "$range" -- . ':(exclude)_bmad-output' || die "diff de la plage impossible."
+    printf '\n```\n'
+  } > "$copy/$content_name"
 else
   awk -v h="### Story $story :" 'index($0, h) == 1 { f = 1; print; next } f && /^##/ { exit } f { print }' \
     "$copy/$epics_file" > "$tmp/spec.md"
@@ -247,6 +289,22 @@ fi
 # --- publication et trace ----------------------------------------------------------------------
 # titres du rapport abaissés de deux niveaux, pour rester sous la section du fichier de story
 sed -E 's/^(#{1,4}) /\1## /' "$tmp/rapport.md" > "$tmp/rapport-abaisse.md"
+
+if [[ -n $range ]]; then
+  # Une revue de plage ne se publie nulle part : elle sert une rétrospective, qui cite son rapport
+  # en le rejouant constat par constat. Le fichier de story n'est pas touché non plus.
+  if [[ -n $out_file ]]; then
+    {
+      printf '<!-- llm-review range=%s model=%s ; angles : %s ; fichiers touchés par le relecteur : %s -->\n\n' \
+        "$range" "$model" "$lenses" "$written_label"
+      cat "$tmp/rapport.md"
+    } > "$out_file" || die "écriture du rapport impossible : $out_file."
+    printf '%s: rapport écrit dans %s (%s, %s commits).\n' "$script_name" "$out_file" "$model" "$range_count"
+  else
+    cat "$tmp/rapport.md"
+  fi
+  exit 0
+fi
 
 if [[ -n $pr ]]; then
   {
