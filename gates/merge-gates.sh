@@ -145,16 +145,29 @@ ci_gate() { # $1 réponse de l'état combiné de la CI, $2 1 si le workflow exis
     fi
     return 0
   fi
+  # « skipped » n'est pas un échec : le workflow a délibérément renoncé, parce que l'événement ne le
+  # concerne pas. Sur la tête d'une PR, le déclencheur « push » n'écoute que dev et main, et la forge
+  # pose donc un « checks / checks (push) » ignoré à côté du « (pull_request) » vert — constaté le
+  # 21/09/2026, dès que les contextes sont devenus obligatoires. Il est écarté, mais il ne suffit
+  # pas : il faut au moins un run effectivement vert.
+  local effectifs=""
+  local etat
+  for etat in $etats; do
+    [[ $etat != skipped ]] || continue
+    effectifs+="${effectifs:+ }$etat"
+  done
   if [[ " $etats " == *" pending "* ]]; then
     printf "bloque\ten cours sur la tête : relancer l'audit quand elle est terminée.\n"
-  elif [[ $etats =~ ^(success )*success$ ]]; then
+  elif [[ -z $effectifs ]]; then
+    printf 'bloque\taucun run effectif sur la tête : tous les statuts du workflow « checks » sont ignorés.\n'
+  elif [[ $effectifs =~ ^(success )*success$ ]]; then
     printf 'passe\tverte sur la tête.\n'
   else
     # Les états fautifs sont nommés, les verts écartés : avec deux jobs, « success failure » se lisait
     # mal (constat de la revue de la PR n° 52). « cancelled », « skipped » ou « warning » bloquent
     # comme un échec, et aucun état inconnu n'est traité par omission.
-    local fautifs="" etat
-    for etat in $etats; do
+    local fautifs=""
+    for etat in $effectifs; do
       [[ $etat != success ]] || continue
       [[ " $fautifs " == *" $etat "* ]] || fautifs+="${fautifs:+ }$etat"
     done

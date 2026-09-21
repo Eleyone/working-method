@@ -262,4 +262,20 @@ case_commit_de_statut_deux_commits() {
   assert_contains "plus d'un commit" "$out" "raison"
 }
 
+case_verrou_ci_statut_ignore() {
+  # Constat du 21/09/2026 : dès que les contextes sont obligatoires, la tête d'une PR porte un
+  # « checks / checks (push) » ignoré à côté du « (pull_request) » vert, le déclencheur push
+  # n'écoutant que dev et main. Un renoncement n'est pas un échec — mais il ne suffit pas.
+  ci_reponse "checks / checks (push)=skipped" "checks / checks (pull_request)=success"
+  ci_case 1 passe "un statut ignoré à côté d'un vert ne bloque pas"
+  ci_reponse "checks / checks (push)=skipped"
+  ci_case 1 bloque "un statut ignoré seul ne vaut pas un run"
+  assert_contains "aucun run effectif" "$out" "le message dit ce qui manque"
+  ci_reponse "checks / checks (push)=skipped" "checks / checks (pull_request)=failure"
+  ci_case 1 bloque "un ignoré n'excuse pas un échec"
+  assert_eq "bloque	état failure sur la tête." "$out" "seul l'état fautif est nommé"
+  ci_reponse "checks / checks (push)=skipped" "checks / checks (pull_request)=pending"
+  ci_case 1 bloque "un run en cours bloque, ignoré ou non"
+}
+
 run_case "$@"
