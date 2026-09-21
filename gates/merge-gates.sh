@@ -20,6 +20,10 @@
 # Procédure : docs/procedures/verify-and-merge-pr.md
 
 # Au-delà de la dernière page, la forge répond null et non une liste vide.
+merge_gates_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || exit 2
+# shellcheck source=shell.sh
+. "$merge_gates_dir/shell.sh"
+
 timeline_page_count() { # $1 page de timeline
   local count
   count=$(jq -e 'if type == "array" then length elif type == "null" then 0 else error end' "$1" 2>/dev/null) || return 2
@@ -61,12 +65,16 @@ last_report() { # $1 fichier des premières lignes de rapports, $2 SHA, $3 base
 # Le commit de tête, seul après le SHA relu, ne change que les lignes de statut (story review → done,
 # last_updated, epic → done) et n'ajoute par ailleurs que des lignes au fichier de story et à
 # deferred-work.md. Affiche la raison d'un refus.
-# Lignes d'un texte qui correspondent, ou avec -v ne correspondent pas, à un motif. grep rend 1 quand il ne
-# trouve rien et 2 sur une erreur : « rien trouvé » réussit avec une sortie vide, une erreur échoue.
+# Lignes d'un texte qui correspondent, ou avec -v ne correspondent pas, à un motif. « Rien trouvé »
+# réussit avec une sortie vide, une erreur échoue. La lecture du code de grep n'est pas écrite ici :
+# elle est commune à tout le dépôt (scripts/lib/shell.sh). Cette fonction garde en revanche son
+# contrat de bibliothèque — elle **répond par son code de retour** et ne quitte jamais son appelant,
+# comme l'exige docs/procedures/shell-scripts.md.
 select_lines() { # $1 options de grep (-E, -vE, -xF…), $2 motif, $3 texte
-  local rc=0
-  grep "$1" -- "$2" <<< "$3" || rc=$?
-  ((rc <= 1))
+  local lignes rc=0
+  shell_grep_status lignes "$1" -- "$2" <<< "$3" || rc=$?
+  ((rc <= 1)) || return 1
+  printf '%s' "$lignes"
 }
 
 # Les noms locaux sont préfixés : un script appelant déclare status_file et stories_dir en readonly, et

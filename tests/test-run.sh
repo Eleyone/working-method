@@ -4,8 +4,10 @@
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 faux_depot() { # $1 = corps du cas d'essai ; prépare $work/faux avec un public/ témoin
-  mkdir -p "$work/faux/scripts/tests" "$work/faux/public"
+  mkdir -p "$work/faux/scripts/tests" "$work/faux/scripts/lib" "$work/faux/public"
   cp "$root/scripts/tests/run.sh" "$root/scripts/tests/lib.sh" "$work/faux/scripts/tests/"
+  # lib.sh charge les enveloppes communes du dépôt : le faux dépôt les emporte aussi
+  cp "$root/scripts/lib/shell.sh" "$work/faux/scripts/lib/"
   : > "$work/faux/public/index.html"
   printf '#!/usr/bin/env bash\n. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"\ncase_essai() {\n  %s\n}\nrun_case "$@"\n' "$1" \
     > "$work/faux/scripts/tests/test-essai.sh"

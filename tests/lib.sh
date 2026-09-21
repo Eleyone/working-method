@@ -47,23 +47,13 @@ commit_all() { # $1 message ; commit de tout le dépôt de test, affiche son SHA
   git -C "$work/depot" rev-parse HEAD
 }
 
-# grep dans un cas de test : 0 trouvé, 1 rien trouvé, 2 et plus = erreur de lecture. « || true »
-# confondrait les deux, et un fichier illisible passerait pour un fichier sans correspondance — le
-# piège même que docs/procedures/shell-scripts.md décrit (constat de la revue de la PR n° 51).
-#
-# Le résultat est déposé dans la variable nommée en $1, plutôt que rendu sur la sortie standard :
-# appelée dans « $(…) », la fonction ne pourrait pas arrêter le cas, son « exit » ne quittant que le
-# sous-shell. L'entrée standard de l'appel est celle de grep, ce qui permet « tests_grep_into x -xF
-# -f liste <<< "$texte" ».
-tests_grep_into() { # $1 = nom de la variable à remplir, $2… = arguments de grep
-  local -n tests_grep_destination=$1
-  shift
-  local tests_grep_code=0
-  tests_grep_destination=$(grep "$@") || tests_grep_code=$?
-  ((tests_grep_code <= 1)) \
-    || { printf 'recherche impossible (grep, code %s) : %s\n' "$tests_grep_code" "${*: -1}" >&2; exit 1; }
-  return 0
-}
+# Un cas de test emploie les enveloppes communes du dépôt (scripts/lib/shell.sh) : « shell_grep_into
+# <variable> <arguments de grep> » distingue « rien trouvé » (1) d'une erreur de lecture, et remplit
+# une variable de l'appelant — appelée dans « $(…) », une fonction ne pourrait pas arrêter le cas.
+# Ici l'arrêt vaut 1, code d'un cas en échec, et non 2, l'anomalie des scripts.
+shell_error_exit=1
+# shellcheck source=../lib/shell.sh
+. "$tests_dir/../lib/shell.sh"
 
 # Un cas sans objet dans cet environnement sort en code 3 : run.sh le compte comme ignoré et affiche
 # sa raison. Il n'échoue pas — et il ne se tait pas non plus, sans quoi la couverture baisserait en
