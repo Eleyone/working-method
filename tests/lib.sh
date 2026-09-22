@@ -58,6 +58,41 @@ shell_error_exit=1
 # Un cas sans objet dans cet environnement sort en code 3 : run.sh le compte comme ignoré et affiche
 # sa raison. Il n'échoue pas — et il ne se tait pas non plus, sans quoi la couverture baisserait en
 # silence là où la suite tourne autrement (constat de la première exécution en CI, story 3.13).
+# Un PDF minimal, **fabriqué octet par octet** : aucun PDF n'entre dans le dépôt, aucun générateur
+# n'est ajouté, et chaque cas écrit exactement le défaut qu'il veut prouver. Un PDF minimal est du
+# texte, et poppler reconstruit la table des références croisées : il n'y a rien à calculer.
+#
+# **Une seule écriture.** Trois stories en avaient fabriqué chacune la sienne — deux homonymes
+# « pdf() » aux signatures incompatibles et un « ecrire_pdf() » —, la même structure recopiée trois
+# fois (constat A3, rétrospective de l'epic 7). Les paramètres réunissent ce dont les trois avaient
+# besoin, et aucun n'est obligatoire.
+tests_pdf() { # $1 = chemin, $2 = texte de la page, $3 = auteur (métadonnée), $4 = XMP, $5 = octets de bourrage
+  local chemin=$1 texte=${2:-Bonjour} auteur=${3:-} xmp=${4:-} bourrage=${5:-0} flux info="" objets=""
+  mkdir -p "$(dirname "$chemin")"
+  flux="BT /F1 12 Tf 20 150 Td ($texte) Tj ET"
+  objets+="1 0 obj<</Type/Catalog/Pages 2 0 R"
+  [[ -z $xmp ]] || objets+="/Metadata 97 0 R"
+  objets+=">>endobj"$'\n'
+  objets+="2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj"$'\n'
+  objets+="3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 300]/Contents 4 0 R/Resources<</Font<</F1 99 0 R>>>>>>endobj"$'\n'
+  objets+="4 0 obj<</Length ${#flux}>>stream"$'\n'"$flux"$'\n'"endstream endobj"$'\n'
+  objets+="99 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj"$'\n'
+  if [[ -n $auteur ]]; then
+    objets+="98 0 obj<</Author ($auteur)>>endobj"$'\n'
+    info="/Info 98 0 R"
+  fi
+  if [[ -n $xmp ]]; then
+    local paquet="<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?><x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description dc:description=\"$xmp\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\"/></rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>"
+    objets+="97 0 obj<</Type/Metadata/Subtype/XML/Length ${#paquet}>>stream"$'\n'"$paquet"$'\n'"endstream endobj"$'\n'
+  fi
+  {
+    printf '%%PDF-1.4\n%s\n' "$objets"
+    # Le bourrage pèse le fichier, pour les cas qui vérifient un poids annoncé ou un seuil.
+    ((bourrage == 0)) || { printf '%%'; head -c "$bourrage" /dev/zero | tr '\0' 'A'; printf '\n'; }
+    printf 'trailer<</Root 1 0 R%s/Size 100>>\n%%%%EOF\n' "$info"
+  } > "$chemin"
+}
+
 skip_case() { # $1 raison
   printf 'IGNORÉ : %s\n' "$1"
   exit 3
