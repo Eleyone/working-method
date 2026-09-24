@@ -152,6 +152,130 @@ for number in "${!epic_total[@]}"; do
   [[ -n ${epic_status[$number]+x} ]] || gap "stories de l'epic $number sans ligne epic-$number dans le suivi."
 done
 
+# --- questions ouvertes des rétrospectives -------------------------------------------------------
+# La section « open_questions » existe pour qu'une question ne se perde pas dans la prose d'un
+# document. Une section que **rien ne lit** se perdrait exactement de la même façon : c'est le constat
+# bloquant de la revue de la PR n° 107, et il est juste. Le contrôle la lit donc à chaque passage.
+#
+# Il ne la lit pas dans « sprint_plan.py » : ce script est installé par BMAD et une réinstallation
+# l'écraserait. Le contrôle du projet, lui, tourne au verrou de fusion de chaque PR.
+#
+# « lands_in » vaut parfois « rien » — c'est une valeur **légitime**, l'aveu qu'aucune story ne
+# ramènera la question. La rendre visible est tout l'objet de la section ; la refuser reviendrait à
+# forcer une réponse fausse.
+readonly question_keys="id epic question state lands_in"
+questions=0
+declare -A question_ids=()
+question_id="" question_line=0
+declare -A question_seen=()
+
+close_question() { # vérifie l'entrée en cours, s'il y en a une
+  local key
+  flush_field   # la dernière valeur de l'entrée n'est close par rien d'autre
+  [[ -n $question_id ]] || return 0
+  for key in $question_keys; do
+    [[ -n ${question_seen[$key]:-} ]] \
+      || gap "question ouverte « $question_id » (ligne $question_line) : clé « $key » absente ou vide."
+  done
+  question_id="" question_line=0
+  question_seen=()
+}
+
+in_questions=0 line_no=0
+# Les motifs vivent dans des variables : une espace échappée juste avant « ]] » rend l'expression
+# conditionnelle ambiguë pour bash, qui s'arrête sur « symbole « ; » inattendu » (constaté).
+readonly q_entry_id='^  -[[:space:]]+id:[[:space:]]*(.*)$'
+readonly q_entry_any='^  -[[:space:]]'
+readonly q_field='^    ([a-z_]+):[[:space:]]*(.*)$'
+# Une valeur longue est **repliée** sur des lignes de continuation plus indentées : c'est
+# « sprint_status.py » qui l'écrit ainsi, et toutes les entrées réelles en portent. Ne lire que la
+# première ligne physique marcherait par chance — jusqu'à une valeur dont la première ligne ne
+# porterait rien d'utile (constat bloquant de la seconde revue de la PR n° 107). Les continuations
+# sont donc recollées avant tout test.
+readonly q_cont='^      [^ ]'
+field_key="" field_value=""
+
+# Le retrait des guillemets vit **ici et nulle part ailleurs**. Il a d'abord été écrit deux fois —
+# une pour l'identifiant, une pour les autres valeurs — et les deux copies ne retiraient pas les
+# mêmes caractères : l'identifiant gardait ses apostrophes (constat de la septième revue de la
+# PR n° 107). Deux copies qui divergent, c'est le point 19 d'AGENTS.md sur son plus petit objet.
+denuder() { # $1 = valeur brute ; affiche la valeur sans ses guillemets ni ses apostrophes
+  local value=$1
+  value=${value%\"} value=${value#\"}
+  value=${value%\'} value=${value#\'}
+  printf '%s' "$value"
+}
+
+flush_field() { # clôt la valeur en cours et la compte si elle porte quelque chose
+  local value
+  [[ -n $field_key ]] || return 0
+  value=$(denuder "$field_value")
+  # les blancs de recollement ne sont pas une valeur
+  value=${value//[$' \t']/}
+  [[ -z $value ]] || question_seen[$field_key]=1
+  field_key="" field_value=""
+}
+while IFS= read -r line; do
+  line_no=$((line_no + 1))
+  line=${line%$'\r'}
+  # une clé de premier niveau ferme la section courante
+  # Le **nom** de la clé est capturé, jamais la ligne entière comparée : « open_questions: » suivi
+  # d'une espace, d'une tabulation ou d'un commentaire n'est plus la même chaîne, et l'égalité
+  # stricte faisait sauter toute la section **en silence** — le contrôle annonçait alors zéro
+  # question et laissait tout passer (constat bloquant de la huitième revue de la PR n° 107).
+  if [[ $line =~ ^([a-zA-Z_][a-zA-Z0-9_]*): ]]; then
+    close_question
+    if [[ ${BASH_REMATCH[1]} == open_questions ]]; then in_questions=1; else in_questions=0; fi
+    continue
+  fi
+  ((in_questions == 1)) || continue
+  if [[ $line =~ $q_entry_id ]]; then
+    close_question
+    question_id=${BASH_REMATCH[1]}
+    question_id=$(denuder "$question_id")
+    question_line=$line_no
+    questions=$((questions + 1))
+    # « id » est vu dès qu'il porte une valeur, y compris quand cette valeur est un doublon : sinon
+    # la fermeture de l'entrée signalait en plus « clé « id » absente ou vide », ce qui est faux —
+    # elle est présente, elle est seulement répétée. Deux écarts pour une faute, dont un mensonger
+    # (constat de la quatrième revue de la PR n° 107).
+    [[ -z $question_id ]] || question_seen[id]=1
+    if [[ -z $question_id ]]; then
+      gap "question ouverte ligne $line_no : « id » vide."
+    elif [[ -n ${question_ids[$question_id]+x} ]]; then
+      gap "question ouverte « $question_id » : identifiant répété (lignes ${question_ids[$question_id]} et $line_no)."
+    else
+      question_ids[$question_id]=$line_no
+    fi
+    continue
+  fi
+  # une entrée qui ne commence pas par « id » n'est pas lisible par ce contrôle : elle est signalée
+  # plutôt que silencieusement ignorée, faute de quoi ses clés manquantes ne seraient jamais vues
+  if [[ $line =~ $q_entry_any ]]; then
+    close_question
+    gap "question ouverte ligne $line_no : l'entrée doit commencer par « - id: »."
+    continue
+  fi
+  if [[ $line =~ $q_field ]]; then
+    flush_field
+    [[ -n $question_id ]] || continue
+    [[ " $question_keys " == *" ${BASH_REMATCH[1]} "* ]] || continue
+    field_key=${BASH_REMATCH[1]} field_value=${BASH_REMATCH[2]}
+    continue
+  fi
+  # ligne de continuation d'une valeur repliée
+  if [[ -n $field_key && $line =~ $q_cont ]]; then
+    field_value+=" ${line#"${line%%[![:space:]]*}"}"
+    continue
+  fi
+  # Pas de traitement des lignes vides : une ligne vide au milieu d'une valeur repliée ne l'interrompt
+  # déjà pas, puisque rien ici ne réinitialise « field_key » — seules la clé, l'entrée ou la section
+  # suivantes le font, et elles sont traitées plus haut. La quatrième revue de la PR n° 107 annonçait
+  # le contraire ; le cas de test écrit pour la garde est passé **sans** elle, ce qui l'a réfutée et
+  # a évité d'ajouter une sixième garde qui ne garde rien (rétrospective de l'epic 5).
+done <<< "$yaml"
+close_question
+
 if [[ -n $merge ]]; then
   rc=0
   merge_key=$(sprint_story_key "$merge" <<< "$yaml") || rc=$?
@@ -172,5 +296,6 @@ if ((${#gaps[@]})); then
   printf '  - %s\n' "${gaps[@]}" | sort
   exit 1
 fi
-printf '%s: cohérent %s (%d stories, %d epics, %d fichiers de story)%s.\n' "$script_name" "$where" \
-  "$stories" "$epics" "$files" "${merge:+ ; story $merge à done, fusion admise}"
+printf '%s: cohérent %s (%d stories, %d epics, %d fichiers de story, %d question(s) ouverte(s))%s.\n' \
+  "$script_name" "$where" "$stories" "$epics" "$files" "$questions" \
+  "${merge:+ ; story $merge à done, fusion admise}"
