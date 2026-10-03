@@ -1,0 +1,4 @@
+[
+  {"id": 3, "type": "comment", "user": {"login": "autre-compte"}, "body": "llm-review sha=aaaaaaaa base=dev model=modele-essai verdict=pass"},
+  {"id": 4, "type": "comment", "user": {"login": "compte-essai"}, "body": "llm-review sha=aaaaaaaa base=dev model=modele-essai verdict=pass\n\nrapport favorable"}
+]
