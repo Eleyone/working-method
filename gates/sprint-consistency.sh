@@ -5,15 +5,18 @@
 #   sprint-consistency.sh --merge <n.m>                 en plus, la story n.m est à done des deux côtés
 #   sprint-consistency.sh [--merge <n.m>] --rev <commit>   lit le suivi et les fichiers dans ce commit
 #
-# Code de sortie : 0 cohérent ; 1 au moins un écart ; 2 contrôle impossible (usage, suivi absent ou vide,
-# commit introuvable, liste des fichiers de story illisible).
-# Statuts seulement en v1, pas les branches (D-17). Bash seul, sans Python, outil YAML ni option GNU.
-# Procédure : docs/procedures/sprint-consistency.md
+# Code de sortie : 0 cohérent, ou suivi désactivé (sprint.convention = none, et le message le dit) ;
+# 1 au moins un écart ; 2 contrôle impossible (usage, workflow.config refusé, convention que l'outillage
+# ne sait pas encore servir, suivi absent ou vide, commit introuvable, liste des fichiers de story
+# illisible).
+# Les chemins du suivi et des fichiers de story viennent de workflow.config (sprint.status-file,
+# sprint.stories-dir) ; le vocabulaire des statuts et la forme des clés sont ceux de la convention
+# « numbered ». Statuts seulement en v1, pas les branches (D-17 du projet source). Bash seul, sans
+# Python, outil YAML ni option GNU.
+# Procédure : procedures/sprint-consistency.md
 set -euo pipefail
 
 readonly script_name=sprint-consistency
-readonly stories_dir="_bmad-output/implementation-artifacts"
-readonly status_file="$stories_dir/sprint-status.yaml"
 readonly story_statuses=" backlog ready-for-dev in-progress review done "
 readonly epic_statuses=" backlog in-progress done "
 readonly usage="usage : sprint-consistency.sh [--merge <n.m>] [--rev <commit>]"
@@ -21,8 +24,10 @@ readonly usage="usage : sprint-consistency.sh [--merge <n.m>] [--rev <commit>]"
 die() { printf '%s: %b\n' "$script_name" "$*" >&2; exit 2; }
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=lib/sprint.sh
-. "$script_dir/lib/sprint.sh"
+# shellcheck source=../lib/config.sh
+. "$script_dir/../lib/config.sh"
+# shellcheck source=../lib/sprint.sh
+. "$script_dir/../lib/sprint.sh"
 
 merge="" rev=""
 while (($#)); do
@@ -34,8 +39,23 @@ while (($#)); do
 done
 [[ -z $merge || $merge =~ ^[0-9]+\.[0-9]+[a-z]?$ ]] || die "numéro de story attendu après --merge, par exemple 0.6."
 
-root=$(git rev-parse --show-toplevel 2>/dev/null) || die "à lancer dans le dépôt."
+config_project_root root || die "à lancer dans le dépôt."
 cd "$root"
+config_load "$root/workflow.config" || exit 2
+config_get convention sprint.convention
+rc=0
+convention_reason=$(sprint_convention_served "$convention") || rc=$?
+case $rc in
+  0) ;;
+  1) # --merge demande qu'une story soit à done : sans suivi, la question n'a pas de réponse
+     [[ -z $merge ]] || die "--merge $merge impossible : suivi de sprint désactivé (sprint.convention = none)."
+     printf '%s: suivi de sprint désactivé (sprint.convention = none) : rien à contrôler, aucune cohérence n’est affirmée.\n' "$script_name"
+     exit 0 ;;
+  *) die "$convention_reason" ;;
+esac
+config_get stories_dir sprint.stories-dir
+config_get status_file sprint.status-file
+readonly stories_dir status_file
 
 # --- lecture : arbre de travail, ou commit donné par --rev -------------------------------------
 if [[ -n $rev ]]; then
@@ -63,7 +83,7 @@ fi
 file_exists "$status_file" || die "$status_file absent $where : aucune conclusion sur la cohérence."
 yaml=$(read_file "$status_file") || die "lecture de $status_file impossible $where."
 
-# section development_status : lecture commune de scripts/lib/sprint.sh
+# section development_status : lecture commune de lib/sprint.sh
 entries=$(sprint_entries <<< "$yaml") || die "lecture de $status_file impossible $where."
 [[ -n $entries ]] || die "section development_status vide ou absente de $status_file $where : aucune conclusion sur la cohérence."
 

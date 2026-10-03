@@ -1,0 +1,96 @@
+# workflow.config — ce qui est propre à un projet qui consomme le dépôt commun. Schéma 1.
+#
+# À la racine du projet, versionné. Format de git config, lu par
+# « git config -f workflow.config --no-includes --null --list ».
+#
+# ⛔ Tous les champs sont obligatoires, et aucun n'a de valeur par défaut : un champ absent, inconnu,
+# écrit deux fois, vide ou mal typé fait refuser le fichier entier, et l'outil sort en code 2.
+# « none » désactive un champ marqué « désactivable » ; l'outil qui le lit le dit dans sa sortie.
+#
+# Pièges de la syntaxe de git config :
+#   - un nom de section ou de clé ne contient pas « _ » (erreur de syntaxe) ; il s'écrit en
+#     minuscules avec des tirets ;
+#   - « \ » hors guillemets est une erreur de syntaxe : une expression régulière s'écrit sans
+#     antislash, avec une classe de caractères ([.]md$ plutôt que \.md$) ;
+#   - « # » et « ; » ouvrent un commentaire : une valeur qui en contient se met entre guillemets ;
+#   - pas de « [include] » : il est refusé comme une section inconnue.
+#
+# Description de chaque champ : procedures/workflow-config.md du dépôt commun.
+
+[workflow]
+	# version du schéma : 1
+	schema = 1
+
+[forge]
+	# dépôt sur la forge, « propriétaire/nom » ; le dépôt distant origin doit être celui-là
+	repo = Proprietaire/projet
+	# branche d'intégration, base de toutes les PR
+	base = dev
+	# branche de publication ; aucune PR n'y est ouverte ni fusionnée par l'outillage (désactivable)
+	release-branch = main
+	# préfixes de branche admis vers la base, sans « / »
+	branch-prefixes = feat fix chore docs
+	# fichier des variables GITEA_URL, GITEA_USER, GITEA_TOKEN, ignoré par git
+	env-file = .env
+
+[sprint]
+	# convention du suivi : numbered (clés « n-m-titre »), keyed (story 5), none
+	convention = numbered
+	# suivi de sprint (désactivable avec convention = none)
+	status-file = _bmad-output/implementation-artifacts/sprint-status.yaml
+	# dossier des fichiers de story (désactivable avec convention = none)
+	stories-dir = _bmad-output/implementation-artifacts
+	# texte des stories pour la revue de spec, en-têtes « ### Story n.m : » (désactivable)
+	spec-source = _bmad-output/planning-artifacts/epics.md
+
+[review]
+	# expression régulière étendue : une PR dont CHAQUE fichier correspond est dispensée de revue
+	# (désactivable)
+	exempt-paths = ^_bmad-output/
+	# où va le rapport de revue : pr-comment, ou file (story 8)
+	report = pr-comment
+	# relecteur d'un auteur Claude, et d'un auteur Gemini (noms de « agy models »)
+	reviewer-for-claude = gemini-3.1-pro-high
+	reviewer-for-gemini = claude-opus-4-6-thinking
+	# délai maximal de la relecture, en secondes
+	timeout = 900
+	# fragment de consigne propre au projet : description, contexte, méthode de revue, contrôles
+	project-layer = docs/review/project-layer.md
+	# chemins qui ne doivent jamais se trouver dans la copie envoyée au relecteur
+	private-paths = .env .pr-body.md
+	# chemins écartés du diff d'une revue de plage (désactivable)
+	range-exclude = _bmad-output
+
+[guard]
+	# garde-fou public/privé, appelé « <commande> history <plage> » (désactivable)
+	command = none
+	# liste des motifs privés du garde-fou (désactivable ; none exige command = none)
+	patterns-file = none
+
+[ci]
+	# workflow de la CI qui fait foi, cherché sur la base (désactivable)
+	workflow = .gitea/workflows/checks.yml
+	# nom du workflow tel que la forge préfixe ses contextes de statut (désactivable avec workflow)
+	status-context = checks
+	# règle d'amorçage : true admet une CI absente tant que le workflow manque à la base
+	bootstrap = false
+
+[checks]
+	# point d'entrée unique des contrôles, lancé à la racine (désactivable)
+	command = none
+	# dossier des contrôles découverts par checks/run-checks.sh (désactivable)
+	dir = none
+
+[tests]
+	# sorties du projet que la suite de tests ne doit jamais toucher (désactivable)
+	protected-outputs = none
+
+[bmad]
+	# version de BMAD déclarée par le projet (story 1)
+	version = 6.12.0
+	# modules activés, parmi ceux du dépôt commun (story 1)
+	modules = core bmm
+
+[agents]
+	# dossiers où bin/install relie les skills du dépôt commun
+	skill-dirs = .claude/skills .agents/skills

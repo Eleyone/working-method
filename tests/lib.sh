@@ -1,14 +1,22 @@
-# Outils communs des fichiers de test, chargés en tête de chaque scripts/tests/test-*.sh.
+# Outils communs des fichiers de test, chargés en tête de chaque fichier de test : ceux du dépôt
+# commun (tests/test-*.sh) comme ceux d'un projet qui le consomme.
 #
 # Un fichier de test définit des fonctions case_<nom> et se termine par « run_case "$@" » :
-#   bash scripts/tests/test-x.sh --list    liste les cas
-#   bash scripts/tests/test-x.sh <nom>     lance un cas ; code non nul en cas d'échec
+#   bash tests/test-x.sh --list    liste les cas
+#   bash tests/test-x.sh <nom>     lance un cas ; code non nul en cas d'échec
 # Chaque cas dispose d'un dossier temporaire $work, supprimé à la fin.
 set -euo pipefail
 
+# tests_dir est le dossier de cette bibliothèque et common la racine du dépôt commun ; root est la racine du dépôt
+# git qui porte le fichier de test, et fixtures le dossier « fixtures » voisin de ce fichier. Un
+# projet consommateur qui charge cette bibliothèque depuis ses propres tests garde donc ses chemins,
+# et le dépôt commun les siens.
 tests_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-root=$(cd "$tests_dir/../.." && pwd)
-fixtures="$tests_dir/fixtures"
+common=$(cd "$tests_dir/.." && pwd)
+caller_dir=$(cd "$(dirname "${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}")" && pwd)
+root=$(git -C "$caller_dir" rev-parse --show-toplevel 2>/dev/null) \
+  || { echo "tests: $caller_dir n'est pas dans un dépôt git." >&2; exit 2; }
+fixtures="$caller_dir/fixtures"
 cd "$root"
 
 work=$(mktemp -d)
@@ -47,13 +55,63 @@ commit_all() { # $1 message ; commit de tout le dépôt de test, affiche son SHA
   git -C "$work/depot" rev-parse HEAD
 }
 
-# Un cas de test emploie les enveloppes communes du dépôt (scripts/lib/shell.sh) : « shell_grep_into
+# Un cas de test emploie les enveloppes communes (lib/shell.sh du dépôt commun) : « shell_grep_into
 # <variable> <arguments de grep> » distingue « rien trouvé » (1) d'une erreur de lecture, et remplit
 # une variable de l'appelant — appelée dans « $(…) », une fonction ne pourrait pas arrêter le cas.
 # Ici l'arrêt vaut 1, code d'un cas en échec, et non 2, l'anomalie des scripts.
 shell_error_exit=1
 # shellcheck source=../lib/shell.sh
 . "$tests_dir/../lib/shell.sh"
+
+# Écrit un workflow.config complet et valide dans <dossier>, puis applique les changements donnés :
+# « champ=valeur » remplace une valeur, « -champ » retire le champ. L'écriture passe par git config,
+# qui cite lui-même ce qui doit l'être. Les valeurs de base décrivent un projet fictif à suivi numéroté.
+write_workflow_config() { # $1 = dossier, $2… = changements
+  local dir=$1 file change key
+  file="$dir/workflow.config"
+  shift
+  mkdir -p "$dir"
+  : > "$file"
+  local -a base=(
+    workflow.schema=1
+    forge.repo=Proprietaire/projet-essai
+    forge.base=dev
+    forge.release-branch=main
+    "forge.branch-prefixes=feat fix chore docs"
+    forge.env-file=.env
+    sprint.convention=numbered
+    sprint.status-file=_bmad-output/implementation-artifacts/sprint-status.yaml
+    sprint.stories-dir=_bmad-output/implementation-artifacts
+    sprint.spec-source=_bmad-output/planning-artifacts/epics.md
+    "review.exempt-paths=^_bmad-output/"
+    review.report=pr-comment
+    review.reviewer-for-claude=gemini-3.1-pro-high
+    review.reviewer-for-gemini=claude-opus-4-6-thinking
+    review.timeout=900
+    review.project-layer=review/project-layer.md
+    "review.private-paths=.env docs/private .pr-body.md"
+    review.range-exclude=_bmad-output
+    guard.command=scripts/check-private.sh
+    guard.patterns-file=docs/private/forbidden-patterns.txt
+    ci.workflow=.gitea/workflows/checks.yaml
+    ci.status-context=checks
+    ci.bootstrap=true
+    checks.command=scripts/check.sh
+    checks.dir=scripts/checks
+    "tests.protected-outputs=public build"
+    bmad.version=6.12.0
+    "bmad.modules=core bmm"
+    "agents.skill-dirs=.claude/skills .agents/skills"
+  )
+  for change in "${base[@]}" "$@"; do
+    if [[ $change == -* ]]; then
+      git config -f "$file" --unset "${change#-}"
+    else
+      key=${change%%=*}
+      git config -f "$file" "$key" "${change#*=}"
+    fi
+  done
+}
 
 # Un cas sans objet dans cet environnement sort en code 3 : run.sh le compte comme ignoré et affiche
 # sa raison. Il n'échoue pas — et il ne se tait pas non plus, sans quoi la couverture baisserait en

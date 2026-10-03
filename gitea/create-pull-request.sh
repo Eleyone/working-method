@@ -3,18 +3,21 @@
 #
 #   create-pull-request.sh --title "<titre>" [--body-file <fichier>]
 #
-# Base déduite du préfixe de branche : feat/, fix/, chore/, docs/ → dev. Aucune PR vers main.
+# Base déduite du préfixe de branche : un préfixe de forge.branch-prefixes (workflow.config) mène à
+# forge.base. Aucune PR depuis la base ni vers la branche de publication (forge.release-branch).
 # Corps lu dans un fichier (par défaut .pr-body.md à la racine, ignoré par git), passé par
 # jq --rawfile et envoyé par curl --data @. Le jeton ne s'affiche jamais ; la sortie donne
 # le numéro de la PR, jamais son adresse, qui contient le nom de la forge.
-# Procédure : docs/procedures/create-pull-request.md
+# Procédure : procedures/create-pull-request.md
 set -euo pipefail
 set +x # même lancé avec bash -x, la trace s'arrête ici, avant la lecture du jeton
 
 script_name=create-pull-request
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=lib/gitea.sh
-. "$script_dir/lib/gitea.sh"
+# shellcheck source=../lib/config.sh
+. "$script_dir/../lib/config.sh"
+# shellcheck source=gitea.sh
+. "$script_dir/gitea.sh"
 
 require_tools
 
@@ -28,8 +31,16 @@ while (($#)); do
 done
 [[ -z $body_file || $body_file == /* ]] || body_file="$PWD/$body_file"
 
-root=$(git rev-parse --show-toplevel 2>/dev/null) || die "à lancer dans le dépôt."
+config_project_root root || die "à lancer dans le dépôt."
 cd "$root"
+config_load "$root/workflow.config" || exit 2
+config_get forge_base forge.base
+config_get release_branch forge.release-branch
+config_get branch_prefixes forge.branch-prefixes
+config_get guard_command guard.command
+config_get guard_patterns guard.patterns-file
+config_get forge_env_file forge.env-file
+gitea_configure
 body_file=${body_file:-$root/.pr-body.md}
 [[ -n $title ]] || die "titre manquant : --title \"<titre>\"."
 [[ -s $body_file ]] || die "corps absent ou vide : ${body_file#"$root"/}."
@@ -40,18 +51,19 @@ trap 'rm -rf "$tmp"' EXIT
 check_origin
 
 branch=$(git symbolic-ref --quiet --short HEAD) || die "HEAD détachée : se placer sur la branche de la PR."
-case $branch in
-  feat/?*|fix/?*|chore/?*|docs/?*) base=dev ;;
-  hotfix/*) die "branche $branch : une PR de hotfix vers main s'ouvre avec le skill hotfix." ;;
-  dev|main) die "branche $branch : ce skill n'ouvre aucune PR vers main ; la publication de dev passe par le skill release." ;;
-  *) die "préfixe de branche refusé : $branch. Préfixes admis : feat/, fix/, chore/, docs/." ;;
-esac
+base=$(branch_base "$branch" "$forge_base" "$release_branch" "$branch_prefixes") || die "$base"
 
 pending=$(git status --porcelain 2>/dev/null) || die "lecture de l'état du dépôt impossible : rien n'est ouvert."
 [[ -z $pending ]] || die "modifications non commitées : tout commiter avant d'ouvrir la PR."
 
-patterns_file=${PRIVATE_PATTERNS_FILE:-$root/docs/private/forbidden-patterns.txt}
-require_patterns_file "$patterns_file" "l'ouverture d'une PR exige l'audit"
+patterns_file=""
+if [[ $guard_command == none ]]; then
+  printf '%s: garde-fou désactivé (guard.command = none) : ni audit des commits, ni contrôle des motifs privés.\n' "$script_name" >&2
+else
+  [[ -x $root/$guard_command ]] || die "$guard_command absent ou non exécutable (guard.command)."
+  patterns_file=${PRIVATE_PATTERNS_FILE:-$root/$guard_patterns}
+  require_patterns_file "$patterns_file" "l'ouverture d'une PR exige l'audit"
+fi
 
 git fetch --quiet origin "$base" 2>/dev/null || die "lecture de la branche $base sur la forge impossible."
 base_sha=$(git rev-parse FETCH_HEAD 2>/dev/null) || die "lecture de la branche $base récupérée impossible."
@@ -60,13 +72,18 @@ remote_head=$(git ls-remote --heads origin "refs/heads/$branch" 2>/dev/null) \
 [[ ${remote_head%%$'\t'*} == "$(git rev-parse HEAD)" ]] \
   || die "la branche $branch n'est pas poussée sur ce commit : la pousser avant d'ouvrir la PR."
 
-PRIVATE_PATTERNS_FILE=$patterns_file "$root/scripts/check-private.sh" history "$base_sha..HEAD" \
-  || die "le garde-fou public/privé refuse la branche : rien n'est ouvert."
+if [[ -n $patterns_file ]]; then
+  PRIVATE_PATTERNS_FILE=$patterns_file "$root/$guard_command" history "$base_sha..HEAD" \
+    || die "le garde-fou public/privé refuse la branche : rien n'est ouvert."
+fi
 
 printf '%s\n' "$title" > "$tmp/title"
-rc=0
-grep -vE '^[[:space:]]*(#|$)' "$patterns_file" > "$tmp/patterns" 2>/dev/null || rc=$?
-((rc <= 1)) || die "lecture du fichier de motifs impossible : rien n'est ouvert."
+: > "$tmp/patterns"
+if [[ -n $patterns_file ]]; then
+  rc=0
+  grep -vE '^[[:space:]]*(#|$)' "$patterns_file" > "$tmp/patterns" 2>/dev/null || rc=$?
+  ((rc <= 1)) || die "lecture du fichier de motifs impossible : rien n'est ouvert."
+fi
 if [[ -s $tmp/patterns ]]; then
   rc=0
   grep -qiF -f "$tmp/patterns" "$tmp/title" "$body_file" || rc=$?
@@ -75,7 +92,7 @@ if [[ -s $tmp/patterns ]]; then
 fi
 
 # .env n'est lu qu'ici, juste avant le premier appel à l'API
-load_gitea_env "$root/.env"
+load_gitea_env "$root/$forge_env_file"
 check_token_owner "$tmp/user.json"
 
 page=1

@@ -1,29 +1,31 @@
 #!/usr/bin/env bash
-# Audite les verrous de fusion d'une PR et, avec --merge, la fusionne en squash vers dev si tous passent.
+# Audite les verrous de fusion d'une PR et, avec --merge, la fusionne en squash vers la base du projet
+# (forge.base de workflow.config) si tous passent.
 #
 #   verify-and-merge-pr.sh <numéro de PR>           audit : affiche chaque verrou, ne fusionne rien
 #   verify-and-merge-pr.sh <numéro de PR> --merge   fusion en squash, seulement si tous les verrous passent
 #
 # Code de sortie : 0 tous les verrous passent (fusion faite avec --merge) ; 1 au moins un verrou bloque ;
-# 2 audit impossible. Aucune option --force : force_merge et merge_when_checks_succeed ne sont jamais
-# envoyés. Le script lit les objets git et l'API, et n'écrit jamais dans l'arbre de travail.
-# Procédure : docs/procedures/verify-and-merge-pr.md
+# 2 audit impossible, workflow.config refusé compris. Aucune option --force : force_merge et
+# merge_when_checks_succeed ne sont jamais envoyés. Le script lit les objets git et l'API, et n'écrit
+# jamais dans l'arbre de travail. Un verrou désactivé dans workflow.config s'affiche « inactif » : il
+# ne bloque pas, et il ne se fait pas passer pour vert.
+# Procédure : procedures/verify-and-merge-pr.md
 set -euo pipefail
 set +x # même lancé avec bash -x, la trace s'arrête ici, avant la lecture du jeton
 
 script_name=verify-and-merge-pr
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=lib/gitea.sh
-. "$script_dir/lib/gitea.sh"
-# shellcheck source=lib/sprint.sh
-. "$script_dir/lib/sprint.sh"
-# shellcheck source=lib/merge-gates.sh
-. "$script_dir/lib/merge-gates.sh"
+# shellcheck source=../lib/config.sh
+. "$script_dir/../lib/config.sh"
+# shellcheck source=../gitea/gitea.sh
+. "$script_dir/../gitea/gitea.sh"
+# shellcheck source=../lib/sprint.sh
+. "$script_dir/../lib/sprint.sh"
+# shellcheck source=merge-gates.sh
+. "$script_dir/merge-gates.sh"
 die() { printf '%s: %b\n' "$script_name" "$*" >&2; exit 2; } # audit impossible : code 2
 
-readonly stories_dir="_bmad-output/implementation-artifacts"
-readonly status_file="$stories_dir/sprint-status.yaml"
-readonly ci_workflow=".gitea/workflows/checks.yaml"
 readonly max_timeline_pages=100
 readonly usage="usage : verify-and-merge-pr.sh <numéro de PR> [--merge]"
 
@@ -38,14 +40,40 @@ while (($#)); do
 done
 [[ -n $pr ]] || die "$usage"
 
-root=$(git rev-parse --show-toplevel 2>/dev/null) || die "à lancer dans le dépôt."
+config_project_root root || die "à lancer dans le dépôt."
 cd "$root"
+config_load "$root/workflow.config" || exit 2
+config_get forge_base forge.base
+config_get release_branch forge.release-branch
+config_get convention sprint.convention
+config_get status_file sprint.status-file
+config_get stories_dir sprint.stories-dir
+config_get exempt_paths review.exempt-paths
+config_get review_report review.report
+config_get guard_command guard.command
+config_get guard_patterns guard.patterns-file
+config_get ci_workflow ci.workflow
+config_get ci_context ci.status-context
+config_get ci_bootstrap ci.bootstrap
+config_get checks_command checks.command
+config_get forge_env_file forge.env-file
+readonly forge_base release_branch convention status_file stories_dir exempt_paths review_report \
+  guard_command guard_patterns ci_workflow ci_context ci_bootstrap checks_command forge_env_file
+# Une valeur que l'outillage ne sait pas encore servir sort en 2, en nommant la story qui l'apporte.
+[[ $review_report == pr-comment ]] \
+  || die "review.report = $review_report : rapport de revue que l'outillage ne sait pas encore lire (story 8)."
+rc=0
+convention_reason=$(sprint_convention_served "$convention") || rc=$?
+((rc != 2)) || die "$convention_reason"
+gitea_configure
 check_origin
-for tool in check-private sprint-consistency; do
-  [[ -x $root/scripts/$tool.sh ]] || die "scripts/$tool.sh absent ou non exécutable."
-done
-patterns_file=${PRIVATE_PATTERNS_FILE:-$root/docs/private/forbidden-patterns.txt}
-require_patterns_file "$patterns_file" "aucune fusion sans audit"
+[[ -x $script_dir/sprint-consistency.sh ]] || die "sprint-consistency.sh absent ou non exécutable à côté de ce script."
+patterns_file=""
+if [[ $guard_command != none ]]; then
+  [[ -x $root/$guard_command ]] || die "$guard_command absent ou non exécutable (guard.command)."
+  patterns_file=${PRIVATE_PATTERNS_FILE:-$root/$guard_patterns}
+  require_patterns_file "$patterns_file" "aucune fusion sans audit"
+fi
 
 tmp=$(mktemp -d)
 worktree=""
@@ -60,11 +88,11 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-load_gitea_env "$root/.env"
+load_gitea_env "$root/$forge_env_file"
 check_token_owner "$tmp/user.json"
 
 blocked=0
-report() { # état (passe, absent, bloque), verrou, détail
+report() { # état (passe, absent, inactif, bloque), verrou, détail
   printf '  %-7s %-16s %b\n' "$1" "$2" "$3"
   [[ $1 != bloque ]] || blocked=1
 }
@@ -91,16 +119,15 @@ if [[ $merged == true || $state != open ]]; then
   printf '%s: au moins un verrou bloque.\n' "$script_name"
   exit 1
 fi
-if [[ $base == main ]]; then
-  report bloque "PR fusionnable" "base main : la publication passe par le skill release, un correctif de production par le skill hotfix."
-elif [[ $base != dev ]]; then
-  report bloque "PR fusionnable" "base $base refusée : seule dev est admise."
+base_out=$(base_gate "$base" "$forge_base" "$release_branch")
+if [[ ${base_out%%$'\t'*} == bloque ]]; then
+  report bloque "PR fusionnable" "${base_out#*$'\t'}"
 elif [[ $draft == true ]]; then
   report bloque "PR fusionnable" "PR en brouillon."
 elif [[ $mergeable != true ]]; then
-  report bloque "PR fusionnable" "PR non fusionnable (conflit, ou branche en retard sur dev)."
+  report bloque "PR fusionnable" "PR non fusionnable (conflit, ou branche en retard sur $forge_base)."
 else
-  report passe "PR fusionnable" "ouverte, pas en brouillon, fusionnable, base dev."
+  report passe "PR fusionnable" "ouverte, pas en brouillon, fusionnable, base $forge_base."
 fi
 
 git fetch --quiet origin "$base" "$branch" 2>/dev/null || die "lecture des branches $base et $branch sur la forge impossible."
@@ -111,7 +138,9 @@ changed=$(git diff --name-only "$base_sha...$head_sha") || die "liste des fichie
 [[ -n $changed ]] || die "la PR n° $pr ne modifie aucun fichier."
 
 story_num="" story_key=""
-if story_num=$(story_number_from_branch "$branch"); then
+if [[ $convention == none ]]; then
+  story_num=""
+elif story_num=$(story_number_from_branch "$branch"); then
   # story absente, en double ou suivi illisible : pas de clé ; le verrou de suivi en donne la raison
   story_key=$(git show "$head_sha:$status_file" 2>/dev/null | sprint_story_key "$story_num") || story_key=""
 else
@@ -119,8 +148,11 @@ else
 fi
 
 # --- verrou 2 : revue LLM ---------------------------------------------------------------------
-if ! grep -qv '^_bmad-output/' <<< "$changed"; then
-  report passe "revue LLM" "exception documentaire : tous les fichiers sont sous _bmad-output/, revue non exigée."
+rc=0
+review_exemption "$exempt_paths" "$changed" || rc=$?
+((rc != 2)) || die "review.exempt-paths illisible par grep : exception documentaire indécidable."
+if ((rc == 0)); then
+  report passe "revue LLM" "exception documentaire : tous les fichiers correspondent à review.exempt-paths ($exempt_paths), revue non exigée."
 else
   # la liste des commentaires d'une issue ignore limit et page (bogue connu de Gitea) : les rapports
   # sont lus dans la timeline de la PR, qui pagine, par pages de la taille maximale admise par la forge
@@ -166,56 +198,78 @@ fi
 
 # --- verrou 3 : garde-fou public/privé --------------------------------------------------------
 guard_ok=0
-if guard_out=$(PRIVATE_PATTERNS_FILE=$patterns_file "$root/scripts/check-private.sh" history "$base_sha..$head_sha" 2>&1); then
+if [[ $guard_command == none ]]; then
+  report inactif "garde-fou" "désactivé (guard.command = none) : aucun garde-fou public/privé n'est lancé."
+elif guard_out=$(PRIVATE_PATTERNS_FILE=$patterns_file "$root/$guard_command" history "$base_sha..$head_sha" 2>&1); then
   guard_ok=1
-  report passe "garde-fou" "check-private.sh history sur les commits de la PR, avec la liste des motifs."
+  report passe "garde-fou" "$guard_command history sur les commits de la PR, avec la liste des motifs."
 else
-  report bloque "garde-fou" "check-private.sh refuse la PR :"
+  report bloque "garde-fou" "$guard_command refuse la PR :"
   indent <<< "$guard_out"
 fi
 
 # --- verrou 4 : CI ------------------------------------------------------------------------------
-code=$(gitea_api GET "/repos/$gitea_canonical_repo/commits/$head_sha/status" "$tmp/status.json")
-[[ $code == 200 ]] || die "lecture de l'état de la CI impossible (HTTP $code) : $(forge_message "$tmp/status.json")"
-ci_on_base=0
-if git cat-file -e "$base_sha:$ci_workflow" 2>/dev/null; then ci_on_base=1; fi
-ci_out=$(ci_gate "$tmp/status.json" "$ci_on_base" "$ci_workflow") || die "état de la CI illisible."
-ci_decision=${ci_out%%$'\t'*}
-ci_detail=${ci_out#*$'\t'}
-if [[ $ci_decision == passe || $ci_decision == bloque ]]; then
-  report "$ci_decision" "CI" "$ci_detail"
+if [[ $ci_workflow == none ]]; then
+  report inactif "CI" "désactivée (ci.workflow = none) : aucun statut de CI n'est exigé — ce n'est pas une CI verte."
 else
-  # règle d'amorçage : le substitut est le garde-fou déjà lancé, puis scripts/check.sh sur la tête s'il existe
-  substitute="check-private.sh history (verrou garde-fou)"
-  substitute_ok=$guard_ok
-  check_out=""
-  if git cat-file -e "$head_sha:scripts/check.sh" 2>/dev/null; then
-    substitute="$substitute, scripts/check.sh sur la tête"
-    worktree="$tmp/copie"
-    git worktree add --quiet --detach "$worktree" "$head_sha" 2>/dev/null || die "création de la copie de la tête impossible."
-    # La copie n'a ni .tools/ ni .env, tous deux ignorés par git : les binaires épinglés viennent du
-    # dépôt de travail, et les valeurs légales du fichier factice commité (AD-9). Sans cela, check.sh
-    # n'y trouverait aucun Hugo et le substitut bloquerait toute PR (entrée reportée de la story 0.7).
-    if ! check_out=$(cd "$worktree" && TOOLS_LOCAL_DIR="$root/.tools" scripts/check.sh 2>&1); then
-      substitute_ok=0
-    fi
-  fi
-  if ((substitute_ok)); then
-    report absent "CI" "$ci_workflow absent de la base : règle d'amorçage, substitut réussi ($substitute)."
+  code=$(gitea_api GET "/repos/$gitea_canonical_repo/commits/$head_sha/status" "$tmp/status.json")
+  [[ $code == 200 ]] || die "lecture de l'état de la CI impossible (HTTP $code) : $(forge_message "$tmp/status.json")"
+  ci_on_base=0
+  if git cat-file -e "$base_sha:$ci_workflow" 2>/dev/null; then ci_on_base=1; fi
+  ci_out=$(ci_gate "$tmp/status.json" "$ci_on_base" "$ci_workflow" "$ci_context") || die "état de la CI illisible."
+  ci_decision=${ci_out%%$'\t'*}
+  ci_detail=${ci_out#*$'\t'}
+  if [[ $ci_decision == passe || $ci_decision == bloque ]]; then
+    report "$ci_decision" "CI" "$ci_detail"
+  elif [[ $ci_bootstrap != true ]]; then
+    # sans règle d'amorçage (ci.bootstrap = false), une CI absente n'a pas de substitut : elle bloque
+    report bloque "CI" "$ci_workflow absent de la base et aucun statut sur la tête : ci.bootstrap = false, pas de substitut."
   else
-    report bloque "CI" "$ci_workflow absent de la base : substitut d'amorçage en échec ($substitute)."
-    [[ -z $check_out ]] || indent <<< "$check_out"
+    # règle d'amorçage : le substitut est le garde-fou déjà lancé, puis checks.command sur la tête
+    substitute="garde-fou (verrou 3)"
+    substitute_ok=$guard_ok
+    [[ $guard_command != none ]] || { substitute="aucun garde-fou (guard.command = none)"; substitute_ok=1; }
+    check_out=""
+    if [[ $checks_command != none ]]; then
+      checks_entry=${checks_command%% *}
+      if git cat-file -e "$head_sha:$checks_entry" 2>/dev/null; then
+        substitute="$substitute, $checks_command sur la tête"
+        worktree="$tmp/copie"
+        git worktree add --quiet --detach "$worktree" "$head_sha" 2>/dev/null || die "création de la copie de la tête impossible."
+        # La copie n'a ni .tools/ ni .env, tous deux ignorés par git : les binaires épinglés viennent du
+        # dépôt de travail (TOOLS_LOCAL_DIR), et les valeurs du projet de ses propres fichiers commités.
+        # Sans cela, les contrôles n'y trouveraient pas leurs outils et le substitut bloquerait toute PR
+        # (entrée reportée de la story 0.7 du projet source). La commande est découpée sur les espaces,
+        # jamais évaluée par le shell.
+        read -r -a checks_argv <<< "$checks_command"
+        if ! check_out=$(cd "$worktree" && TOOLS_LOCAL_DIR="$root/.tools" "${checks_argv[@]}" 2>&1); then
+          substitute_ok=0
+        fi
+      else
+        substitute="$substitute ($checks_entry absent de la tête)"
+      fi
+    else
+      substitute="$substitute, aucun contrôle (checks.command = none)"
+    fi
+    if ((substitute_ok)); then
+      report absent "CI" "$ci_workflow absent de la base : règle d'amorçage, substitut réussi ($substitute)."
+    else
+      report bloque "CI" "$ci_workflow absent de la base : substitut d'amorçage en échec ($substitute)."
+      [[ -z $check_out ]] || indent <<< "$check_out"
+    fi
   fi
 fi
 
 # --- verrou 5 : suivi de sprint ---------------------------------------------------------------
-if ! git cat-file -e "$base_sha:$status_file" 2>/dev/null && git cat-file -e "$head_sha:$status_file" 2>/dev/null; then
+if [[ $convention == none ]]; then
+  report inactif "suivi de sprint" "désactivé (sprint.convention = none) : aucun suivi de sprint n'est contrôlé."
+elif ! git cat-file -e "$base_sha:$status_file" 2>/dev/null && git cat-file -e "$head_sha:$status_file" 2>/dev/null; then
   report passe "suivi de sprint" "exemption d'amorçage : cette PR ajoute $status_file."
 else
-  consistency=("$root/scripts/sprint-consistency.sh" --rev "$head_sha")
+  consistency=("$script_dir/sprint-consistency.sh" --rev "$head_sha")
   label="contrôle global (branche sans numéro de story)"
   if [[ -n $story_num ]]; then
-    consistency=("$root/scripts/sprint-consistency.sh" --merge "$story_num" --rev "$head_sha")
+    consistency=("$script_dir/sprint-consistency.sh" --merge "$story_num" --rev "$head_sha")
     label="story $story_num à done"
   fi
   if sprint_out=$("${consistency[@]}" 2>&1); then
@@ -250,9 +304,12 @@ trailers=$(sed '/^$/d' <<< "$trailers" | sort -u)
 printf '%s\n' "$subjects" > "$tmp/message.txt"
 if [[ -n $trailers ]]; then printf '\n%s\n' "$trailers" >> "$tmp/message.txt"; fi
 merge_title "$tmp/pr-avant-fusion.json" "$pr" "$tmp/titre.txt" || die "titre de la PR n° $pr illisible."
-rc=0
-grep -vE '^[[:space:]]*(#|$)' "$patterns_file" > "$tmp/patterns" 2>/dev/null || rc=$?
-((rc <= 1)) || die "lecture du fichier de motifs impossible : rien n'est fusionné."
+: > "$tmp/patterns"
+if [[ -n $patterns_file ]]; then
+  rc=0
+  grep -vE '^[[:space:]]*(#|$)' "$patterns_file" > "$tmp/patterns" 2>/dev/null || rc=$?
+  ((rc <= 1)) || die "lecture du fichier de motifs impossible : rien n'est fusionné."
+fi
 if [[ -s $tmp/patterns ]]; then
   rc=0
   grep -qiF -f "$tmp/patterns" "$tmp/titre.txt" "$tmp/message.txt" || rc=$?

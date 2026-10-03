@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Enveloppes communes (scripts/lib/shell.sh, actions de la rétrospective de l'epic 3). Elles sont
+# Enveloppes communes (lib/shell.sh, actions de la rétrospective de l'epic 3 du projet source). Elles sont
 # employées par les contrôles, les tests, les scripts et les bibliothèques de décision : leur contrat
 # se vérifie ici une fois pour toutes.
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 # Chaque appel tourne dans son propre bash : shell_die s'arrête par « exit », qui terminerait le cas.
 enveloppe() { # $1 = corps à exécuter après le chargement
-  run bash -c 'script_name=essai; . "$1/scripts/lib/shell.sh"; shift; eval "$1"' _ "$root" "$1"
+  run bash -c 'script_name=essai; . "$1/lib/shell.sh"; shift; eval "$1"' _ "$common" "$1"
 }
 
 case_shell_grep_into_trouve_et_ne_trouve_pas() {
-  enveloppe 'shell_grep_into v -c "shell_grep_into" "'"$root"'/scripts/lib/shell.sh"; echo "rc=$? v=$v"'
+  enveloppe 'shell_grep_into v -c "shell_grep_into" "'"$common"'/lib/shell.sh"; echo "rc=$? v=$v"'
   assert_eq 0 "$rc" "une correspondance passe (messages : $err)"
   assert_contains "rc=0" "$out" "l'enveloppe rend 0"
-  enveloppe 'shell_grep_into v -F "zzz-motif-absent-zzz" "'"$root"'/scripts/lib/shell.sh"; echo "rc=$? v=[$v]"'
+  enveloppe 'shell_grep_into v -F "zzz-motif-absent-zzz" "'"$common"'/lib/shell.sh"; echo "rc=$? v=[$v]"'
   assert_eq 0 "$rc" "rien trouvé n'est pas une erreur"
   assert_contains "rc=0 v=[]" "$out" "l'enveloppe rend 0 et la variable est vide : rendre 1 tuerait un appel nu sous set -e"
 }
@@ -27,7 +27,7 @@ case_shell_grep_into_erreur_arrete() {
 
 case_shell_grep_into_code_darret_configurable() {
   # Les tests mettent shell_error_exit à 1 : un cas en échec, pas une anomalie.
-  run bash -c 'script_name=essai; shell_error_exit=1; . "$1/scripts/lib/shell.sh"; shell_grep_into v -F x /fichier/absent' _ "$root"
+  run bash -c 'script_name=essai; shell_error_exit=1; . "$1/lib/shell.sh"; shell_grep_into v -F x /fichier/absent' _ "$common"
   assert_eq 1 "$rc" "le code d'arrêt suit shell_error_exit"
 }
 
@@ -36,7 +36,7 @@ case_shell_grep_status_ne_quitte_jamais() {
   enveloppe 'shell_grep_status v -F "x" /fichier/absent; echo "rc=$?"'
   assert_eq 0 "$rc" "l'appelant continue (messages : $err)"
   assert_contains "rc=2" "$out" "le code de grep est rendu tel quel"
-  enveloppe 'shell_grep_status v -F "zzz-absent-zzz" "'"$root"'/scripts/lib/shell.sh"; echo "rc=$?"'
+  enveloppe 'shell_grep_status v -F "zzz-absent-zzz" "'"$common"'/lib/shell.sh"; echo "rc=$?"'
   assert_contains "rc=1" "$out" "rien trouvé se distingue d'une erreur"
 }
 
@@ -56,14 +56,17 @@ case_shell_grep_jamais_en_tete_de_pipeline() {
   # Le motif cherche un tube précédé d'autre chose qu'un tube et suivi d'une commande, l'espace
   # étant facultative — « shell_grep x|wc » se cache sinon (constat de la revue de la PR n° 56).
   # Ni « || », ni un « | » d'alternative dans une expression régulière n'en sont.
-  local trouves
-  shell_grep_into trouves -rnE 'shell_grep[[:space:]].*[^|]\|[[:space:]]*[a-z]' --include='*.sh' "$root/scripts"
+  # La liste des scripts vient de find : le grep de BusyBox (runner de la forge) ne connaît pas --include.
+  local trouves scripts=()
+  mapfile -t scripts < <(find "$common" -name '*.sh' -not -path '*/.git/*' | LC_ALL=C sort)
+  ((${#scripts[@]} > 0)) || { echo "aucun script trouvé : la règle ne vérifierait rien" >&2; exit 1; }
+  shell_grep_into trouves -nHE 'shell_grep[[:space:]].*[^|]\|[[:space:]]*[a-z]' "${scripts[@]}"
   local restants="" ligne code
   while IFS= read -r ligne; do
     [[ -n $ligne ]] || continue
     # la bibliothèque et ce cas parlent de la règle ; un commentaire n'est pas un appel
     case $ligne in
-      *scripts/lib/shell.sh:*|*test-shell-lib.sh:*) continue ;;
+      */lib/shell.sh:*|*test-shell-lib.sh:*) continue ;;
     esac
     code=${ligne#*:*:}
     [[ ${code#"${code%%[![:space:]]*}"} != \#* ]] || continue

@@ -1,7 +1,7 @@
 # Décisions des verrous de fusion de verify-and-merge-pr, séparées des appels à la forge pour être testées sur
 # des fichiers : pages de timeline, état combiné de la CI, réponse de la PR, commits d'un dépôt git.
 #
-# À charger par « . scripts/lib/merge-gates.sh ». Dépendances : bash, git, jq.
+# À charger par « . gates/merge-gates.sh ». Dépendances : bash, git, jq.
 # Les fonctions ne comptent pas sur set -e : un appel suivi de || le suspend pour toute la fonction,
 # donc chaque étape vérifie son résultat.
 #
@@ -12,17 +12,21 @@
 #   last_report <rapports> <SHA> <base>                dernier rapport pour ce SHA et cette base, champs comparés à l'identique
 #   status_commit_ok <SHA relu> <SHA de tête> <clé> <suivi> <dossier des stories>
 #                                                      règle du commit de statut : 0 respectée, 1 sinon, avec la raison
-#   ci_gate <état CI> <workflow sur la base : 0 ou 1> <chemin du workflow>
+#   ci_gate <état CI> <workflow sur la base : 0 ou 1> <chemin du workflow> <contexte>
 #                                                      « passe|bloque|amorçage<TAB>détail » : 0, 2 illisible
+#   review_exemption <expression|none> <fichiers>      exception documentaire : 0 tous les fichiers
+#                                                      correspondent, 1 non (ou none), 2 expression illisible
+#   base_gate <base de la PR> <forge.base> <publication|none>
+#                                                      « passe|bloque<TAB>détail » : 0
 #   pr_title <PR>                                      titre de la PR, en texte brut : 0, 2 illisible
 #   merge_title <PR> <numéro> <sortie>                 titre du commit de fusion, octet pour octet : 0, 2 illisible
 #
-# Procédure : docs/procedures/verify-and-merge-pr.md
+# Procédure : procedures/verify-and-merge-pr.md
 
 # Au-delà de la dernière page, la forge répond null et non une liste vide.
 merge_gates_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || exit 2
-# shellcheck source=shell.sh
-. "$merge_gates_dir/shell.sh"
+# shellcheck source=../lib/shell.sh
+. "$merge_gates_dir/../lib/shell.sh"
 
 timeline_page_count() { # $1 page de timeline
   local count
@@ -67,9 +71,9 @@ last_report() { # $1 fichier des premières lignes de rapports, $2 SHA, $3 base
 # deferred-work.md. Affiche la raison d'un refus.
 # Lignes d'un texte qui correspondent, ou avec -v ne correspondent pas, à un motif. « Rien trouvé »
 # réussit avec une sortie vide, une erreur échoue. La lecture du code de grep n'est pas écrite ici :
-# elle est commune à tout le dépôt (scripts/lib/shell.sh). Cette fonction garde en revanche son
+# elle est commune à tout l'outillage (lib/shell.sh). Cette fonction garde en revanche son
 # contrat de bibliothèque — elle **répond par son code de retour** et ne quitte jamais son appelant,
-# comme l'exige docs/procedures/shell-scripts.md.
+# comme l'exige procedures/shell-scripts.md.
 select_lines() { # $1 options de grep (-E, -vE, -xF…), $2 motif, $3 texte
   local lignes rc=0
   shell_grep_status lignes "$1" -- "$2" <<< "$3" || rc=$?
@@ -123,23 +127,26 @@ status_commit_ok() { # $1 SHA relu, $2 SHA de tête, $3 clé de la story, $4 sui
 # Une CI qui tourne n'est jamais une CI absente, même pendant l'amorçage. « amorçage » : aucun statut
 # du workflow des contrôles sur la tête et aucun workflow sur la base ; le script lance le substitut.
 #
-# Seuls les statuts du workflow « checks » comptent. Gitea nomme un contexte « <workflow> / <job>
-# (<événement>) », par exemple « checks / checks (pull_request) », et la clé de l'état d'un statut est
+# Seuls les statuts du workflow des contrôles comptent — celui que nomme ci.status-context, ici
+# « checks » dans les exemples. Gitea nomme un contexte « <workflow> / <job> (<événement>) », par
+# exemple « checks / checks (pull_request) », et la clé de l'état d'un statut est
 # « status » — « state » n'existe qu'au niveau combiné (constaté sur un vrai commit, story 3.16).
 # Juger l'état combiné reviendrait à laisser n'importe quel autre workflow verrouiller la fusion :
 # l'agent de parité (AD-16) commente sans bloquer, et son statut ne doit pas décider d'une fusion.
 # La valeur de repli d'un statut sans état s'écrit en un seul mot : la boucle qui nomme les états
 # fautifs découpe sur les espaces, et « sans état » y compterait pour deux (revue de la PR n° 52).
-ci_gate() { # $1 réponse de l'état combiné de la CI, $2 1 si le workflow existe sur la base, sinon 0, $3 chemin du workflow
-  local etats
-  etats=$(jq -er '
+ci_gate() { # $1 réponse de l'état combiné de la CI, $2 1 si le workflow existe sur la base, sinon 0, $3 chemin du workflow, $4 contexte
+  local etats context=${4:-}
+  # un contexte vide prendrait tous les statuts « » et « / … » : refusé comme une réponse illisible
+  [[ -n $context ]] || return 2
+  etats=$(jq -er --arg c "$context" '
       [ (.statuses // [])[]
-        | select((.context // "") == "checks" or ((.context // "") | startswith("checks /")))
+        | select((.context // "") == $c or ((.context // "") | startswith($c + " /")))
         | (.status // "sans-état") ]
       | join(" ")' "$1" 2>/dev/null) || return 2
   if [[ -z $etats ]]; then
     if [[ $2 == 1 ]]; then
-      printf 'bloque\t%s existe sur la base : aucun statut du workflow « checks » sur la tête (story 3.16).\n' "$3"
+      printf 'bloque\t%s existe sur la base : aucun statut du workflow « %s » sur la tête (story 3.16).\n' "$3" "$context"
     else
       printf "amorçage\t%s absent de la base : règle d'amorçage.\n" "$3"
     fi
@@ -159,7 +166,7 @@ ci_gate() { # $1 réponse de l'état combiné de la CI, $2 1 si le workflow exis
   if [[ " $etats " == *" pending "* ]]; then
     printf "bloque\ten cours sur la tête : relancer l'audit quand elle est terminée.\n"
   elif [[ -z $effectifs ]]; then
-    printf 'bloque\taucun run effectif sur la tête : tous les statuts du workflow « checks » sont ignorés.\n'
+    printf 'bloque\taucun run effectif sur la tête : tous les statuts du workflow « %s » sont ignorés.\n' "$context"
   elif [[ $effectifs =~ ^(success )*success$ ]]; then
     printf 'passe\tverte sur la tête.\n'
   else
@@ -184,4 +191,36 @@ merge_title() { # $1 réponse de la PR, $2 numéro de la PR, $3 fichier de sorti
   local title
   title=$(pr_title "$1") || return 2
   printf '%s (#%s)\n' "$title" "$2" > "$3" || return 2
+}
+
+# Exception documentaire : la revue n'est pas exigée quand CHAQUE fichier modifié correspond à
+# review.exempt-paths. Un seul fichier hors de l'expression la rétablit. « none » : aucune exception.
+# Une expression invalide n'est jamais « aucune correspondance » : elle sort en 2. La comparaison est
+# celle de bash (« [[ =~ ]] », expression régulière étendue de la libc), pas celle de grep : le grep de
+# BusyBox rend 1 sur une expression invalide, ce qui ferait exempter toute PR en silence.
+review_exemption() { # $1 expression régulière étendue ou none, $2 liste des fichiers, un par ligne
+  local regex=$1 changed=$2 file rc
+  [[ $regex != none ]] || return 1
+  [[ -n $changed ]] || return 1
+  while IFS= read -r file; do
+    rc=0
+    [[ $file =~ $regex ]] 2>/dev/null || rc=$?
+    case $rc in
+      0) ;;                 # ce fichier correspond
+      1) return 1 ;;        # un fichier hors de l'expression : la revue est exigée
+      *) return 2 ;;
+    esac
+  done <<< "$changed"
+  return 0
+}
+
+# Verrou 1, la base : seule forge.base est admise ; la branche de publication a son propre chemin.
+base_gate() { # $1 base de la PR, $2 forge.base, $3 forge.release-branch ou none
+  if [[ $3 != none && $1 == "$3" ]]; then
+    printf 'bloque\tbase %s, la branche de publication : la publication ne passe pas par ce script.\n' "$1"
+  elif [[ $1 != "$2" ]]; then
+    printf 'bloque\tbase %s refusée : seule %s est admise.\n' "$1" "$2"
+  else
+    printf 'passe\tbase %s.\n' "$1"
+  fi
 }

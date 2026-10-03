@@ -1,0 +1,4 @@
+# Fichier d'environnement local (jeton de la forge) : jamais commité, refusé par ci/check-secrets.sh.
+.env
+# Corps de PR rédigé avant l'ouverture (gitea/create-pull-request.sh) : réécrit à chaque PR.
+.pr-body.md

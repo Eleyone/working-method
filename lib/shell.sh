@@ -1,7 +1,7 @@
 # Enveloppes communes des outils que tous les scripts lancent en boucle. Écrites **une seule fois**
 # pour tout le dépôt : contrôles, tests, scripts opérationnels et bibliothèques de décision.
 #
-# À charger par « . scripts/lib/shell.sh » depuis un script qui a défini script_name.
+# À charger par « . lib/shell.sh » depuis un script qui a défini script_name.
 #
 #   shell_grep_status <variable> <arguments de grep…>
 #       ne quitte jamais : rend 0 trouvé, 1 rien trouvé, le code de grep au-delà. Réservé aux
@@ -21,7 +21,7 @@
 #
 # Pourquoi une variable plutôt qu'une sortie : appelée dans « $(…) », une fonction ne peut pas
 # arrêter son appelant — son « exit » ne quitte que le sous-shell, et l'erreur se perd (piège connu,
-# docs/procedures/shell-scripts.md). La forme qui remplit une variable est la seule qui y survive.
+# procedures/shell-scripts.md). La forme qui remplit une variable est la seule qui y survive.
 #
 # Pourquoi une seule écriture : la même garde avait fini par exister en quatre exemplaires, dont le
 # dernier est né le jour où l'avant-dernier a été écrit pour cette raison exacte (rétrospective de

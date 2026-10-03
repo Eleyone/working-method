@@ -1,7 +1,7 @@
-# Lecture du suivi de sprint (_bmad-output/implementation-artifacts/sprint-status.yaml), en bash et awk seuls,
-# sans jq ni outil YAML : sprint-consistency.sh tourne aussi en CI.
+# Lecture du suivi de sprint (le fichier que désigne sprint.status-file dans workflow.config), en bash
+# et awk seuls, sans jq ni outil YAML : sprint-consistency.sh tourne aussi en CI.
 #
-# À charger par « . scripts/lib/sprint.sh ». Le texte du suivi est lu sur l'entrée standard.
+# À charger par « . lib/sprint.sh ». Le texte du suivi est lu sur l'entrée standard.
 # Les fonctions ne comptent pas sur set -e : un appel suivi de || le suspend pour toute la fonction,
 # donc chaque étape vérifie son résultat. En cas d'erreur, rien n'est écrit sur la sortie standard.
 #
@@ -9,8 +9,13 @@
 #   sprint_story_key <n.m>              clé de la story n.m : 0 trouvée, 1 absente, 2 plusieurs clés ou numéro illisible
 #   sprint_story_status <clé>           statut de la story : 0 trouvé, 1 absente, 2 illisible ou clé en double
 #   story_number_from_branch <branche>  numéro n.m tiré du nom de branche : 0 trouvé, 1 aucun numéro
+#   sprint_convention_served <convention>   0 numbered, servie ici ; 1 none, suivi désactivé ;
+#                                       2 convention que l'outillage ne sait pas encore servir (raison écrite)
 #
-# Procédures : docs/procedures/sprint-consistency.md, docs/procedures/shell-scripts.md
+# Ces fonctions servent la convention « numbered » (clés « n-m-titre », epics « epic-n ») : c'est
+# sprint.convention qui dit si un projet la suit.
+#
+# Procédures : procedures/sprint-consistency.md, procedures/shell-scripts.md
 
 # Section development_status : lignes « clé: valeur » indentées, quelle que soit l'indentation. La valeur perd
 # un commentaire « # … » précédé d'une espace, ses guillemets, ses espaces et son retour chariot de fin.
@@ -61,4 +66,15 @@ sprint_story_status() { # $1 clé de story ; texte du suivi sur l'entrée standa
 story_number_from_branch() { # $1 nom de branche : chore/0-7-verify-and-merge-pr-skill → 0.7
   [[ ${1:-} =~ ^[a-z]+/([0-9]+)-([0-9]+[a-z]?)- ]] || return 1
   printf '%s.%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+}
+
+# Une convention que l'outillage ne sait pas servir sort en 2 en nommant la story qui l'apportera :
+# jamais un repli silencieux sur la lecture « numbered », qui conclurait sur des clés qu'elle ignore.
+sprint_convention_served() { # $1 valeur de sprint.convention
+  case ${1:-} in
+    numbered) return 0 ;;
+    none) return 1 ;;
+    keyed) echo "sprint.convention = keyed : convention que l'outillage ne sait pas encore servir (story 5)."; return 2 ;;
+    *) echo "sprint.convention = « ${1:-} » : convention inconnue."; return 2 ;;
+  esac
 }

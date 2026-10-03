@@ -1,29 +1,35 @@
 # Procédure — Contrôles bloquants
 
-## Écrire un contrôle
-
-Un contrôle est un `scripts/checks/<nom>.sh` qui charge `scripts/checks/lib.sh`, lit les manifestes du rendu de travail et rend `0`, `1` ou `2`.
+Un projet a **un seul** point d'entrée de ses contrôles (`checks.command` de son `workflow.config`) : la même commande tourne sur le poste et dans chaque CI, si bien qu'un contrôle local ne peut pas diverger de celui d'une forge. Le dépôt commun fournit le **mécanisme** de ce point d'entrée, `checks/run-checks.sh` ; ce qui précède les contrôles (un build, le chargement de valeurs, un niveau de contrôle) reste dans le projet, qui appelle le mécanisme après ses propres étapes.
 
 ```bash
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-manifests=$(checks_manifests build/work)
+.working-method/checks/run-checks.sh                     # chaque contrôle par « bash <contrôle> »
+.working-method/checks/run-checks.sh -- <commande>...    # chaque contrôle sous un préfixe, par exemple un chargeur de valeurs
 ```
 
-- **Signalements** : `checks_report <fichier> <écart>` écrit `<fichier>: <écart>` sur la sortie d'erreur. Un contrôle nomme toujours le fichier et l'écart, jamais seulement le nombre.
-- **Brouillons** (AD-10) : sur un fichier en `draft: true`, une valeur qui commence par `[TODO` passe toutes les règles de **forme**. `checks_is_todo <valeur>` et `checks_tolerated <brouillon> <valeur>` donnent l'outil ; la bibliothèque n'écarte rien d'elle-même, parce que la parité (C3), la liste des rubriques (C4) et le garde-fou s'appliquent aussi aux brouillons.
-- **Forme du manifeste** : documentée en tête de `scripts/checks/lib.sh`, définie une seule fois dans `layouts/home.checks.json`. Une entrée peut porter `error` (front matter absent, suffixe de langue absent, page introuvable) : un contrôle lit `error` avant tout le reste.
-- **Niveau** : `CHECK_LEVEL` vaut `standard`, ou `release` avec `--release`. Un contrôle de mise en ligne ne juge rien hors de `release` — `dev` porte des cas en brouillon et les valeurs légales factices, et il y échouerait à chaque PR —, mais il **dit** qu'il est sauté avant de rendre `0` : un `exit 0` muet cacherait un nom de variable mal écrit. C15 (`scripts/checks/release-pages.sh`) est le premier de cette famille, C22 (`scripts/checks/output-patterns.sh`) le second.
-- **Racine du rendu** : un contrôle lit `${CHECK_WORK_ROOT:-build/work}`, pour qu'un cas de test le lance sur des manifestes écrits à la main sans toucher au rendu du dépôt.
-- **Une liste vide n'est pas une conformité** : un contrôle qui parcourt des fichiers vérifie qu'il en a trouvé au moins un avant de conclure, sans quoi une racine erronée ou une sortie de build vide passeraient pour un succès (rétrospective de l'epic 3).
-- **Les enveloppes sont communes** : `checks_xpath`, `checks_attributes` et `checks_find` dans `scripts/checks/lib.sh`, `shell_grep` et `shell_grep_into` dans `scripts/lib/shell.sh`, partagées avec les tests et les scripts. Un contrôle n'écrit pas la sienne.
-- **Lire une chaîne dans une sortie de Hugo** : `decoder_echappements` puis `normaliser_blancs` (`scripts/lib/text.sh`, chargés par `scripts/checks/lib.sh` ; la répétition générale s'en sert aussi depuis la story 11.9), dans cet ordre. Une même chaîne y a **six** sérialisations constatées — entités décimales, hexadécimales ou nommées, séquences `\uXXXX` du JSON-LD de Go — et le rendu de production est minifié : chercher la chaîne brute dans un HTML échappé ne trouve rien et passe pour vert (huit tours de revue sur la PR n° 98). Après normalisation, un fichier tient sur **une seule ligne**, ce qui est aussi ce qui rend sûre une recherche par `grep`, qui travaille ligne par ligne. La résolution d'une `RelPermalink` en chemin de fichier est `checks_page_de_url`.
-- **Confronter à la liste des motifs** : `pdf_confront` (`scripts/lib/pdf.sh`), partagée par C21, C22 et le garde-fou. Elle rend des **numéros de ligne**, jamais le motif ni l'extrait ; tout code autre que `0` et `1` est un échec de recherche, jamais « rien trouvé ». Un contrôle n'écrit pas sa propre recherche (constat A2, rétrospective de l'epic 7).
+## Ce que fait le mécanisme
+
+1. Il lit `checks.dir` dans le `workflow.config` du projet. `none` : aucun contrôle n'est lancé, et il le dit. Un dossier déclaré mais absent est une anomalie (`2`), jamais une conformité.
+2. Il lance **tous** les scripts `*.sh` de ce dossier, découverts dynamiquement, triés, `lib.sh` exclu : une story qui ajoute un contrôle dépose son script et ne touche pas au point d'entrée.
+3. Tous tournent, même après un échec ; tous les écarts s'affichent, puis une ligne nomme les contrôles en échec. `CHECK_LEVEL`, s'il est posé par le projet, est transmis tel quel et nommé dans le résumé.
+
+Codes de sortie : `0` conforme ; `1` écart constaté ; `2` anomalie (un contrôle sorti en `2` ou plus, option inconnue, dossier introuvable, `workflow.config` refusé). Un dossier sans aucun contrôle se dit (« aucun script de contrôle ») et rend `0`, comme dans le projet source.
+
+## Écrire un contrôle
+
+Un contrôle est un `<checks.dir>/<nom>.sh` qui rend `0`, `1` ou `2`. Les règles suivantes viennent du projet source ; elles valent pour tout projet.
+
+- **Signalements** : `<fichier>: <écart>` sur la sortie d'erreur. Un contrôle nomme toujours le fichier et l'écart, jamais seulement le nombre.
+- **Niveau** : un contrôle qui ne juge qu'à un niveau donné (`CHECK_LEVEL`) **dit** qu'il est sauté avant de rendre `0` ailleurs : un `exit 0` muet cacherait un nom de variable mal écrit.
+- **Racine de lecture paramétrable** : un contrôle lit ce qu'il juge sous une racine qu'une variable peut remplacer, pour qu'un cas de test le lance sur des entrées écrites à la main sans toucher aux sorties du projet.
+- **Une liste vide n'est pas une conformité** : un contrôle qui parcourt des fichiers vérifie qu'il en a trouvé au moins un avant de conclure, sans quoi une racine erronée ou une sortie vide passeraient pour un succès (rétrospective de l'epic 3 du projet source).
+- **Les enveloppes sont communes** : `shell_grep` et `shell_grep_into` dans `lib/shell.sh`, partagées avec les tests et les scripts ; les enveloppes propres aux contrôles d'un projet vivent dans son `<checks.dir>/lib.sh`. Un contrôle n'écrit pas la sienne.
+- **Une recherche rend un code, jamais un silence** : tout code autre que `0` et `1` d'un `grep` est un échec de recherche, jamais « rien trouvé » (constat A2, rétrospective de l'epic 7 du projet source).
 
 ## Tester un contrôle
 
-Les cas vivent dans `scripts/tests/test-*.sh` et suivent `docs/procedures/shell-scripts.md`.
+Les cas suivent `shell-scripts.md`.
 
-- **La logique d'un contrôle** se teste sur des **manifestes écrits à la main** sous `scripts/tests/fixtures/` : rapide, hors ligne, sans Hugo.
-- **La forme du manifeste** se teste une seule fois, par `scripts/tests/test-checks-manifest.sh` : un site fixture (`scripts/tests/fixtures/site/`) construit avec le Hugo épinglé, avec les gabarits, la configuration et les données du dépôt, puis lu à `jq`. C'est le seul cas qui lance un vrai build.
-- **L'orchestration** (ordre des builds, découverte, cumul, codes de sortie) se teste sur un faux dépôt, avec un `build.sh` bouchonné : `scripts/tests/test-check.sh`.
-
+- **La logique d'un contrôle** se teste sur des **entrées écrites à la main** sous les fixtures du projet : rapide, hors ligne, sans build.
+- **Le mécanisme** (découverte, tri, cumul, codes de sortie, préfixe, `checks.dir`) se teste sur un faux dépôt : `tests/test-run-checks.sh` du dépôt commun.
+- **Les étapes propres au projet** (son build, son chargeur, son niveau) se testent dans le projet, sur son propre point d'entrée.

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# La section « open_questions » du suivi de sprint, lue par scripts/sprint-consistency.sh.
+# La section « open_questions » du suivi de sprint, lue par gates/sprint-consistency.sh ; puis les
+# chemins et la convention du suivi, lus dans workflow.config.
 #
 # Pourquoi ces cas existent : la section a été ajoutée pour qu'une question de rétrospective ne se
 # perde pas dans la prose d'un document. Une section que **rien ne lit** se perd de la même façon,
@@ -26,9 +27,10 @@ development_status:
 EOF
   printf 'Status: done\n' > "$work/depot/_bmad-output/implementation-artifacts/0-1-premiere-story.md"
   [[ -z ${1:-} ]] || printf '%s\n' "$1" >> "$suivi"
+  write_workflow_config "$work/depot"
 }
 
-controle() { ( cd "$work/depot" && "$root/scripts/sprint-consistency.sh" ); }
+controle() { ( cd "$work/depot" && "$common/gates/sprint-consistency.sh" "$@" ); }
 
 # --- le cas nominal : la section est lue, et son compte s'affiche -------------------------------
 
@@ -254,6 +256,51 @@ action_items:
   run controle
   assert_eq 0 "$rc" "les entrées d action_items ne sont pas lues comme des questions (messages : $err)"
   assert_contains "1 question(s) ouverte(s)" "$out" "une seule question est comptée"
+}
+
+# --- les chemins et la convention viennent de workflow.config ------------------------------------
+
+case_sprint_chemins_lus_dans_workflow_config() {
+  # Le suivi déplacé ailleurs : le contrôle le suit, et l'ancien emplacement ne compte plus.
+  depot_avec
+  mkdir -p "$work/depot/suivi"
+  mv "$work/depot/_bmad-output/implementation-artifacts/sprint-status.yaml" \
+    "$work/depot/_bmad-output/implementation-artifacts/0-1-premiere-story.md" "$work/depot/suivi/"
+  write_workflow_config "$work/depot" sprint.status-file=suivi/sprint-status.yaml sprint.stories-dir=suivi
+  run controle
+  assert_eq 0 "$rc" "le suivi est lu là où workflow.config le place (messages : $err)"
+  write_workflow_config "$work/depot"
+  run controle
+  assert_eq 2 "$rc" "à l'ancien emplacement, le suivi est absent"
+  assert_contains "absent" "$err" "et le contrôle le dit"
+}
+
+case_sprint_desactive_le_dit() {
+  depot_avec
+  write_workflow_config "$work/depot" sprint.convention=none sprint.status-file=none \
+    sprint.stories-dir=none sprint.spec-source=none
+  run controle
+  assert_eq 0 "$rc" "un suivi désactivé n'est pas un écart (messages : $err)"
+  assert_contains "désactivé (sprint.convention = none)" "$out" "le contrôle le dit"
+  assert_contains "aucune cohérence" "$out" "sans affirmer de cohérence"
+  run controle --merge 0.1
+  assert_eq 2 "$rc" "--merge sans suivi n'a pas de réponse"
+}
+
+case_sprint_convention_keyed_pas_encore_servie() {
+  depot_avec
+  write_workflow_config "$work/depot" sprint.convention=keyed
+  run controle
+  assert_eq 2 "$rc" "keyed sort en 2 plutôt que d'être lue comme numbered"
+  assert_contains "story 5" "$err" "le message nomme la story qui l'apportera"
+}
+
+case_sprint_sans_workflow_config() {
+  depot_avec
+  rm "$work/depot/workflow.config"
+  run controle
+  assert_eq 2 "$rc" "sans workflow.config, aucune conclusion"
+  assert_contains "absent ou illisible" "$err" "le message nomme le fichier"
 }
 
 run_case "$@"

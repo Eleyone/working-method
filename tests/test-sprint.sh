@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Lecture du suivi de sprint (scripts/lib/sprint.sh) : constat D4 de la rétrospective de l'epic 0.
+# Lecture du suivi de sprint (lib/sprint.sh) : constat D4 de la rétrospective de l'epic 0 du projet source.
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-. "$root/scripts/lib/sprint.sh"
+. "$common/lib/sprint.sh"
 
 # Suivi minimal : les sections après development_status réutilisent des clés de story.
 suivi() {
@@ -113,6 +113,18 @@ case_numero_de_branche() {
   assert_eq 1 "$rc" "branche sans numéro"
   run story_number_from_branch main
   assert_eq 1 "$rc" "branche sans préfixe"
+}
+
+case_convention_servie() {
+  run sprint_convention_served numbered
+  assert_eq 0 "$rc" "numbered est servie"
+  run sprint_convention_served none
+  assert_eq 1 "$rc" "none désactive le suivi"
+  run sprint_convention_served keyed
+  assert_eq 2 "$rc" "keyed n'est pas encore servie"
+  assert_contains "story 5" "$out" "le refus nomme la story qui l'apportera"
+  run sprint_convention_served autre
+  assert_eq 2 "$rc" "une convention inconnue n'est jamais lue comme numbered"
 }
 
 run_case "$@"

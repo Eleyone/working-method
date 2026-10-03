@@ -1,22 +1,24 @@
 # Procédure — Cohérence du suivi de sprint
 
-Aucune PR n'est fusionnée sur une story mal suivie (AD-24). `scripts/sprint-consistency.sh` vérifie que le suivi de sprint (`_bmad-output/implementation-artifacts/sprint-status.yaml`) et les fichiers de story du même dossier disent la même chose. En v1, il ne vérifie que les statuts, pas les branches (D-17).
+Aucune PR n'est fusionnée sur une story mal suivie. `gates/sprint-consistency.sh` (dépôt commun ; `.working-method/gates/sprint-consistency.sh` depuis un projet) vérifie que le suivi de sprint (`sprint.status-file` du `workflow.config` du projet, dans le projet source `_bmad-output/implementation-artifacts/sprint-status.yaml`) et les fichiers de story (`sprint.stories-dir`) disent la même chose. En v1, il ne vérifie que les statuts, pas les branches (D-17 du projet source).
+
+Il sert la convention **`numbered`** (`sprint.convention`) : clés `<n>-<m>-<titre>`, epics `epic-<n>`. `none` : le script dit que le suivi est désactivé, sort en `0` **sans affirmer de cohérence**, et refuse `--merge` en `2`. `keyed` (clés en kebab-case) sort en `2` jusqu'à la story 5.
 
 ## Quand le lancer
 
 - **Avant chaque commit de statut** d'une story (`in-progress`, `review`, `done`) : contrôle global.
-- **Avant la fusion d'une PR de story** : `--merge <n.m>`, sur la tête de la PR. C'est le verrou de suivi de `verify-and-merge-pr` (story 0.7), qui tire le numéro de la story du nom de la branche (`chore/0-6-…` → `0.6`).
+- **Avant la fusion d'une PR de story** : `--merge <n.m>`, sur la tête de la PR. C'est le verrou de suivi de `verify-and-merge-pr`, qui tire le numéro de la story du nom de la branche (`chore/0-6-…` → `0.6`).
 - **En CI**, dès qu'elle existe : contrôle global. Une story `in-progress` ou `review` n'est jamais un écart en soi : le contrôle passe pendant tout le développement.
 
 ## Lancer
 
 ```bash
-scripts/sprint-consistency.sh                          # contrôle global de l'arbre de travail
-scripts/sprint-consistency.sh --merge 0.6              # en plus, la story 0.6 est à done des deux côtés
-scripts/sprint-consistency.sh --merge 0.6 --rev <SHA>  # lit le suivi et les fichiers dans ce commit
+.working-method/gates/sprint-consistency.sh                          # contrôle global de l'arbre de travail
+.working-method/gates/sprint-consistency.sh --merge 0.6              # en plus, la story 0.6 est à done des deux côtés
+.working-method/gates/sprint-consistency.sh --merge 0.6 --rev <SHA>  # lit le suivi et les fichiers dans ce commit
 ```
 
-Code de sortie : `0` cohérent ; `1` au moins un écart ; `2` contrôle impossible (usage, suivi absent ou vide, commit introuvable, liste des fichiers de story illisible). Seul `0` vaut cohérence.
+Code de sortie : `0` cohérent (ou suivi désactivé, et le message le dit) ; `1` au moins un écart ; `2` contrôle impossible (usage, `workflow.config` refusé, convention que l'outillage ne sait pas encore servir, suivi absent ou vide, commit introuvable, liste des fichiers de story illisible). Seul `0` vaut cohérence.
 
 ## Ce qu'il vérifie
 
@@ -39,7 +41,9 @@ Tolérances :
 
 Si le suivi est absent, si sa section `development_status` est vide, ou si la liste des fichiers de story ne peut pas être lue, le script le dit et sort en échec : il ne conclut jamais à la cohérence sans avoir tout lu.
 
-Le script ne remplace pas `validate` de l'outil de planification BMAD, qui vérifie la structure du fichier de suivi ; il est écrit en bash seul, sans Python ni outil YAML ni option propre aux outils GNU, pour tourner en CI comme sur le poste. Sa lecture du suivi est celle de `scripts/lib/sprint.sh`, commune avec `llm-review` et `verify-and-merge-pr`, et testée par `scripts/tests/run.sh` (`shell-scripts.md`).
+Le script ne remplace pas `validate` de l'outil de planification BMAD, qui vérifie la structure du fichier de suivi ; il est écrit en bash seul, sans Python ni outil YAML ni option propre aux outils GNU, pour tourner en CI comme sur le poste. Sa lecture du suivi est celle de `lib/sprint.sh`, commune avec `llm-review` et `verify-and-merge-pr`, et testée par `tests/run.sh` (`shell-scripts.md`).
+
+Il lit aussi, quand elle existe, la section `open_questions` du suivi (extension du projet source) : chaque entrée commence par `- id:` et porte `id`, `epic`, `question`, `state` et `lands_in`, non vides. Un suivi sans cette section n'est pas un écart.
 
 ## En cas d'écart
 

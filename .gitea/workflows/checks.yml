@@ -1,0 +1,38 @@
+# Contrôles bloquants du dépôt commun. Le workflow ne contient que son déclencheur, le checkout, la
+# vérification du prérequis bash et l'appel du job : toute la logique vit dans ci/checks-job.sh, que le
+# poste lance de la même façon.
+#
+# ⛔ Le nom du workflow (« checks ») et celui du job (« checks ») sont fixés par la protection de main,
+# qui exige le contexte « checks / checks* » : les changer sans changer la protection bloquerait toute
+# fusion (procedures/gitea-branches.md).
+#
+# Runner : label linux_amd64, en mode hôte ; Alpine avec bash 5.3.9, sans jq ni coreutils
+# (procedures/runner-bash.md).
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: linux_amd64
+    steps:
+      # URL absolue épinglée par SHA : la source et le commit sont fixés, sans dépendre du réglage
+      # DEFAULT_ACTIONS_URL de la forge. La v4 tourne sur node 20.
+      - uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # tout l'historique : le contrôle « aucun secret » l'audite en entier (AC 11)
+          fetch-depth: 0
+      # En sh, explicitement : sans « shell: », le step tournerait sous bash, et un bash absent ou trop
+      # ancien ferait échouer le step avant le contrôle qui doit le dire (AC 9).
+      - name: Prérequis bash 4.3
+        shell: sh
+        run: sh bin/check-bash
+      - name: Tests, aucun secret, aucun nom de projet
+        env:
+          # liste des noms de projets consommateurs, hors de l'arbre (variable d'Actions du dépôt) :
+          # absente, ci/check-names.sh sort en 2 (procedures/secrets.md)
+          CHECK_NAMES_PATTERNS: ${{ vars.CHECK_NAMES_PATTERNS }}
+        run: bash ci/checks-job.sh

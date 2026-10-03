@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Décisions des verrous de fusion (scripts/lib/merge-gates.sh) : constats D1, D5 et S5 de la rétrospective
-# de l'epic 0, rapport retenu et règle du commit de statut.
+# Décisions des verrous de fusion (gates/merge-gates.sh) : constats D1, D5 et S5 de la rétrospective
+# de l'epic 0 du projet source, rapport retenu, règle du commit de statut ; puis ce que le paramétrage
+# par workflow.config y a ajouté (contexte de CI, exception documentaire, base).
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-. "$root/scripts/lib/merge-gates.sh"
+. "$common/gates/merge-gates.sh"
 
 readonly user=compte-essai
 
@@ -86,8 +87,8 @@ ci_reponse() { # $1… = « <contexte>=<état> » ; sans argument, aucun statut
   printf '{"state": "peu importe", "total_count": %s, "statuses": [%s]}\n' "$#" "$entrees" > "$work/ci.json"
 }
 
-ci_case() { # $1 workflow sur la base, $2 décision attendue, $3 libellé ; la réponse est déjà écrite
-  run ci_gate "$work/ci.json" "$1" .gitea/workflows/checks.yaml
+ci_case() { # $1 workflow sur la base, $2 décision attendue, $3 libellé, $4 contexte (checks) ; la réponse est déjà écrite
+  run ci_gate "$work/ci.json" "$1" .gitea/workflows/checks.yaml "${4:-checks}"
   assert_eq 0 "$rc" "$3 : code de retour"
   assert_eq "$2" "${out%%$'\t'*}" "$3"
 }
@@ -152,10 +153,10 @@ case_verrou_ci_deux_absences_distinctes() {
 
 case_verrou_ci_reponse_illisible() {
   printf '[]\n' > "$work/ci.json"
-  run ci_gate "$work/ci.json" 0 .gitea/workflows/checks.yaml
+  run ci_gate "$work/ci.json" 0 .gitea/workflows/checks.yaml checks
   assert_eq 2 "$rc" "réponse illisible"
   printf 'pas du json\n' > "$work/ci.json"
-  run ci_gate "$work/ci.json" 0 .gitea/workflows/checks.yaml
+  run ci_gate "$work/ci.json" 0 .gitea/workflows/checks.yaml checks
   assert_eq 2 "$rc" "réponse qui n'est pas du JSON"
 }
 
@@ -276,6 +277,53 @@ case_verrou_ci_statut_ignore() {
   assert_eq "bloque	état failure sur la tête." "$out" "seul l'état fautif est nommé"
   ci_reponse "checks / checks (push)=skipped" "checks / checks (pull_request)=pending"
   ci_case 1 bloque "un run en cours bloque, ignoré ou non"
+}
+
+case_verrou_ci_contexte_lu_dans_workflow_config() {
+  # Le nom du workflow n'est plus écrit dans le verrou : il vient de ci.status-context, espaces et
+  # « & » compris, et le workflow « checks » n'y a plus de place particulière.
+  ci_reponse "CI Tests & Quality / phpunit (push)=success" "checks / checks (pull_request)=failure"
+  ci_case 1 passe "le contexte déclaré décide, un autre workflow n'entre pas" "CI Tests & Quality"
+  ci_reponse "CI Tests & Quality / phpunit (push)=success" "CI Tests & Quality / phpstan (push)=failure"
+  ci_case 1 bloque "un job du workflow déclaré en échec bloque" "CI Tests & Quality"
+  ci_reponse "CI Tests & Quality Extra / job (push)=success"
+  ci_case 1 bloque "un workflow dont le nom commence par le contexte sans être lui ne compte pas" "CI Tests & Quality"
+  assert_contains "aucun statut du workflow « CI Tests & Quality »" "$out" "le message nomme le workflow déclaré"
+  ci_reponse "checks / checks (pull_request)=success"
+  run ci_gate "$work/ci.json" 1 .gitea/workflows/checks.yaml ""
+  assert_eq 2 "$rc" "un contexte vide ne prend pas tous les statuts : réponse refusée"
+}
+
+case_exception_documentaire() {
+  run review_exemption '^_bmad-output/' $'_bmad-output/a.md\n_bmad-output/b.yaml'
+  assert_eq 0 "$rc" "tous les fichiers correspondent : exemptée"
+  run review_exemption '^_bmad-output/' $'_bmad-output/a.md\nAGENTS.md'
+  assert_eq 1 "$rc" "un seul fichier ailleurs rétablit la revue"
+  run review_exemption '[.]md$' $'docs/a.md\nREADME.md'
+  assert_eq 0 "$rc" "l'expression vient du projet : PR documentaire"
+  run review_exemption '[.]md$' $'docs/a.md\nscripts/x.sh'
+  assert_eq 1 "$rc" "un script dans la PR rétablit la revue"
+  run review_exemption none $'_bmad-output/a.md'
+  assert_eq 1 "$rc" "none : aucune exception"
+  run review_exemption none $'docs/none.md'
+  assert_eq 1 "$rc" "none n'est jamais lu comme une expression : un fichier qui s'appelle none n'est pas exempté"
+  run review_exemption '^_bmad-output/' ''
+  assert_eq 1 "$rc" "aucun fichier n'est pas une exemption"
+  run review_exemption '(' 'a.md'
+  assert_eq 2 "$rc" "une expression que grep refuse n'est jamais « aucune correspondance »"
+}
+
+case_verrou_de_base() {
+  run base_gate dev dev main
+  assert_eq "passe" "${out%%$'\t'*}" "la base déclarée passe"
+  run base_gate main dev main
+  assert_eq "bloque" "${out%%$'\t'*}" "la branche de publication est refusée"
+  assert_contains "branche de publication" "$out" "et le message le dit"
+  run base_gate autre dev main
+  assert_eq "bloque" "${out%%$'\t'*}" "toute autre base est refusée"
+  assert_contains "seule dev est admise" "$out" "le message nomme la base admise"
+  run base_gate main main none
+  assert_eq "passe" "${out%%$'\t'*}" "sans branche de publication, la base unique passe"
 }
 
 run_case "$@"
