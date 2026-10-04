@@ -52,7 +52,7 @@ Il vérifie bash, valide `workflow.config`, puis pose `.working-method` (si beso
 
 ## 6. `AGENTS.md`
 
-Le bloc commun vit dans `.working-method/agents/AGENTS.common.md`. L'`AGENTS.md` du projet y renvoie en tête, et ne garde que ce qui est propre au projet. La forme définitive de l'inclusion (renvoi ou copie vérifiée par un test) et la langue du bloc pour un projet francophone se tranchent à la première adoption, et s'écrivent ici.
+Le bloc commun vit dans `.working-method/agents/AGENTS.common.md`. L'`AGENTS.md` du projet y renvoie en tête, et ne garde que ce qui est propre au projet. Le bloc est écrit **en français** (décision d'Arnaud du 04/10/2026) ; les commandes, les chemins et les identifiants y restent tels quels. La forme définitive de l'inclusion (renvoi ou copie vérifiée par un test) se tranche à la première adoption, et s'écrit ici.
 
 ## 7. Prouver le comportement constant
 
