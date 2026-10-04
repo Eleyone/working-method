@@ -81,6 +81,66 @@ case_check_dossier_vide_le_dit() {
   assert_contains "aucun script de contrôle" "$out" "et le mécanisme le dit"
 }
 
+case_check_racine_donnee_hors_d_un_depot_git() {
+  # Un projet peut lancer ses contrôles dans le contexte de build d'une image, sans .git : la racine
+  # est alors donnée par l'appelant, jamais devinée.
+  faux_depot
+  rm -rf "$work/faux/.git"
+  controle a 0
+  mkdir -p "$work/ailleurs"
+  run bash -c 'cd "$1" && bash "$2/checks/run-checks.sh" --root "$2" -- env ENVELOPPE=oui' _ "$work/ailleurs" "$work/faux"
+  assert_eq 0 "$rc" "les contrôles tournent sans dépôt git (messages : $err)"
+  assert_eq "niveau=absent enveloppe=oui a" "$(cat "$work/faux/controles.log")" "le contrôle tourne, sous le préfixe"
+}
+
+case_check_racine_dont_le_nom_commence_par_un_tiret() {
+  # un nom de dossier qui commence par « - » est un dossier, jamais une option de cd
+  faux_depot
+  controle a 0
+  ln -s "$work/faux" "$work/-faux"
+  run bash -c 'cd "$1" && bash "$2/checks/run-checks.sh" --root -faux' _ "$work" "$work/faux"
+  assert_eq 0 "$rc" "la racine « -faux » est lue comme un dossier (messages : $err)"
+  assert_eq "niveau=absent enveloppe=non a" "$(cat "$work/faux/controles.log")" "le contrôle tourne"
+  # « - » seul : « cd -- - » mènerait à $OLDPWD ; c'est ici un dossier comme un autre
+  rm "$work/faux/controles.log"
+  ln -s "$work/faux" "$work/-"
+  run bash -c 'cd "$1" && bash "$2/checks/run-checks.sh" --root -' _ "$work" "$work/faux"
+  assert_eq 0 "$rc" "la racine « - » est lue comme un dossier (messages : $err)"
+  assert_eq "niveau=absent enveloppe=non a" "$(cat "$work/faux/controles.log")" "le contrôle tourne dans « - »"
+}
+
+case_check_sans_git_ni_racine_rend_2() {
+  faux_depot
+  rm -rf "$work/faux/.git"
+  controle a 0
+  lance
+  assert_eq 2 "$rc" "hors d'un dépôt git et sans --root : aucune racine n'est devinée"
+  assert_contains "ou avec --root" "$err" "le message dit comment donner la racine"
+  [[ ! -e $work/faux/controles.log ]] || { echo "un contrôle a tourné sans racine" >&2; exit 1; }
+}
+
+case_check_racine_invalide_rend_2() {
+  faux_depot
+  controle a 0
+  lance --root "$work/absent"
+  assert_eq 2 "$rc" "racine introuvable : code 2"
+  assert_contains "racine du projet introuvable" "$err" "le message nomme la racine"
+  lance --root
+  assert_eq 2 "$rc" "--root sans dossier : code 2"
+  lance --root ""
+  assert_eq 2 "$rc" "--root vide : code 2, jamais le dossier courant"
+  lance --root "$work/faux" --root "$work/faux"
+  assert_eq 2 "$rc" "--root deux fois : code 2"
+  [[ ! -e $work/faux/controles.log ]] || { echo "un contrôle a tourné malgré une racine refusée" >&2; exit 1; }
+  # « cd -- » seul mène au dossier personnel : « --root -- » ne doit jamais y conduire, même quand ce
+  # dossier est un projet valide (ici le faux dépôt lui-même, où le contrôle a tournerait)
+  # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
+  run env HOME="$work/faux" bash -c 'cd "$1" && shift && bash checks/run-checks.sh "$@"' _ "$work/faux" --root --
+  assert_eq 2 "$rc" "--root -- : code 2, jamais le dossier personnel"
+  assert_contains "racine du projet introuvable : --" "$err" "le message nomme la racine refusée"
+  [[ ! -e $work/faux/controles.log ]] || { echo "un contrôle a tourné malgré une racine refusée" >&2; exit 1; }
+}
+
 case_check_dossier_lu_dans_workflow_config() {
   faux_depot checks.dir=controles
   mkdir -p "$work/faux/controles"

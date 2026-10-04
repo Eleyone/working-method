@@ -5,6 +5,7 @@ Un projet a **un seul** point d'entrée de ses contrôles (`checks.command` de s
 ```bash
 .working-method/checks/run-checks.sh                     # chaque contrôle par « bash <contrôle> »
 .working-method/checks/run-checks.sh -- <commande>...    # chaque contrôle sous un préfixe, par exemple un chargeur de valeurs
+.working-method/checks/run-checks.sh --root <racine> [-- <commande>...]   # racine donnée : hors d'un dépôt git
 ```
 
 ## Ce que fait le mécanisme
@@ -31,5 +32,6 @@ Un contrôle est un `<checks.dir>/<nom>.sh` qui rend `0`, `1` ou `2`. Les règle
 Les cas suivent `shell-scripts.md`.
 
 - **La logique d'un contrôle** se teste sur des **entrées écrites à la main** sous les fixtures du projet : rapide, hors ligne, sans build.
-- **Le mécanisme** (découverte, tri, cumul, codes de sortie, préfixe, `checks.dir`) se teste sur un faux dépôt : `tests/test-run-checks.sh` du dépôt commun.
+- **Hors d'un dépôt git** — le contexte de build d'une image, que son `.dockerignore` prive de `.git` —, le mécanisme ne trouve pas la racine seul : le point d'entrée du projet la lui donne par `--root`. Sans dépôt git ni `--root`, il sort en `2` : une racine n'est jamais devinée (constat de la première adoption, phase C de la story outillage-14).
+- **Le mécanisme** (découverte, tri, cumul, codes de sortie, préfixe, `--root`, `checks.dir`) se teste sur un faux dépôt : `tests/test-run-checks.sh` du dépôt commun.
 - **Les étapes propres au projet** (son build, son chargeur, son niveau) se testent dans le projet, sur son propre point d'entrée.

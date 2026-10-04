@@ -7,13 +7,18 @@
 #   checks/run-checks.sh                    lance chaque contrôle par « bash <contrôle> »
 #   checks/run-checks.sh -- <commande>...   lance chaque contrôle par « <commande>... bash <contrôle> »,
 #                                           par exemple sous le chargeur de valeurs du projet
+#   checks/run-checks.sh --root <dossier> [-- <commande>...]
+#                                           racine du projet donnée par l'appelant : pour un projet qui
+#                                           lance ses contrôles hors d'un dépôt git (contexte de build
+#                                           d'une image, sans .git). Sans --root, la racine est le dépôt
+#                                           git du dossier courant, et il n'y en a pas d'autre.
 #
 # Les contrôles sont les scripts « *.sh » du dossier checks.dir de workflow.config, triés, lib.sh exclu :
 # un contrôle ajouté ne modifie pas ce script. Tous tournent, même après un échec, et tous les écarts
 # s'affichent avant le résumé. CHECK_LEVEL, s'il est posé par le projet, est transmis tel quel et
 # nommé dans le résumé. checks.dir = none : aucun contrôle, et le script le dit.
 # Codes de sortie : 0 conforme ; 1 écart constaté ; 2 anomalie (contrôle en code 2 ou plus, option
-# inconnue, dossier introuvable, workflow.config refusé).
+# inconnue, racine ou dossier introuvable, workflow.config refusé).
 # Procédure : procedures/check.md
 set -euo pipefail
 
@@ -22,16 +27,34 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=../lib/config.sh
 . "$script_dir/../lib/config.sh"
 
+usage() { printf 'usage : %s [--root <dossier>] [-- <commande>...]\n' "$0" >&2; exit 2; }
 prefix=()
+given_root=""
 while (($#)); do
   case $1 in
     --) shift; prefix=("$@"); break ;;
-    *) printf '%s: option inconnue « %s ».\nusage : %s [-- <commande>...]\n' "$script_name" "$1" "$0" >&2; exit 2 ;;
+    --root)
+      # une seule fois, et jamais vide : une racine vide se lirait comme le dossier courant
+      [[ -z $given_root && $# -ge 2 && -n $2 ]] \
+        || { printf '%s: --root attend un dossier, une seule fois.\n' "$script_name" >&2; usage; }
+      given_root=$2; shift 2 ;;
+    *) printf '%s: option inconnue « %s ».\n' "$script_name" "$1" >&2; usage ;;
   esac
 done
 
 root=""
-config_project_root root || { printf '%s: à lancer dans le dépôt du projet.\n' "$script_name" >&2; exit 2; }
+if [[ -n $given_root ]]; then
+  # la racine donnée n'est jamais devinée : un dossier absent est une anomalie, pas le dossier courant.
+  # « cd -- » : sans lui, « --root -- » ferait « cd -- », qui mène au dossier personnel, et une racine
+  # dont le nom commence par « - » serait lue comme une option de cd (constat de la revue de la PR n° 4).
+  # « ./ » devant un chemin relatif : « cd -- - » mènerait encore à $OLDPWD (revue 2 de la PR n° 4)
+  root_path=$given_root
+  [[ $root_path == /* ]] || root_path=./$root_path
+  root=$(cd -- "$root_path" 2>/dev/null && pwd -P) \
+    || { printf '%s: racine du projet introuvable : %s (--root).\n' "$script_name" "$given_root" >&2; exit 2; }
+else
+  config_project_root root || { printf '%s: à lancer dans le dépôt du projet, ou avec --root.\n' "$script_name" >&2; exit 2; }
+fi
 cd "$root"
 config_load "$root/workflow.config" || exit 2
 config_get checks_dir checks.dir

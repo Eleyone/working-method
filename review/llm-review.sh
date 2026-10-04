@@ -229,6 +229,23 @@ fi
 copy="$tmp/copie"
 mkdir "$copy" || die "création de la copie isolée impossible."
 git archive --format=tar "$head_sha" | tar -x -C "$copy" || die "export de la copie isolée impossible."
+# Un sous-module n'entre pas dans « git archive » : son contenu est exporté à part, au commit que le
+# commit relu épingle, depuis le sous-module initialisé du poste. Sans lui, le relecteur d'un projet
+# consommateur ne verrait plus l'outillage que ses scripts appellent — ce dépôt commun compris, qu'il
+# voyait avant son extraction (story outillage-14, phase C). Un sous-module absent, ou qui n'a pas ce
+# commit, arrête la revue : jamais une copie à laquelle il manquerait du code en silence.
+git ls-tree -r -z "$head_sha" > "$tmp/arbre" || die "lecture de l'arbre du commit relu impossible."
+while IFS= read -r -d '' entry; do
+  [[ $entry == "160000 commit "* ]] || continue
+  sub_path=${entry#*$'\t'}
+  sub_sha=${entry%%$'\t'*}
+  sub_sha=${sub_sha##* }
+  git -C "$root/$sub_path" cat-file -e "$sub_sha^{commit}" 2>/dev/null \
+    || die "sous-module $sub_path non initialisé, ou sans le commit ${sub_sha:0:7} : « git submodule update --init » avant la revue."
+  mkdir -p "$copy/$sub_path" || die "création de $sub_path dans la copie isolée impossible."
+  git -C "$root/$sub_path" archive --format=tar "$sub_sha" | tar -x -C "$copy/$sub_path" \
+    || die "export du sous-module $sub_path impossible."
+done < "$tmp/arbre"
 # .git toujours, puis les chemins privés du projet (review.private-paths)
 for private in .git $private_paths; do
   [[ ! -e $copy/$private && ! -L $copy/$private ]] || die "la copie isolée contient $private : rien n'est envoyé."
@@ -243,7 +260,8 @@ canary=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
 [[ ${#canary} == 24 ]] || die "création du jeton de lecture impossible."
 if [[ -n $pr ]]; then
   printf '# jeton-de-lecture: %s\n' "$canary" > "$copy/$content_name"
-  git diff "$base_sha...$head_sha" >> "$copy/$content_name" || die "diff de la PR impossible."
+  # --submodule=diff : la montée d'un sous-module se lit comme le diff de son code, pas comme deux SHA
+  git diff --submodule=diff "$base_sha...$head_sha" >> "$copy/$content_name" || die "diff de la PR impossible."
 elif [[ -n $range ]]; then
   # Les artefacts de cadrage (review.range-exclude) sont écartés du diff : le relecteur les a déjà
   # dans la copie, au commit de fin, et leur churn noierait le code. Les fusions sont écartées de la
