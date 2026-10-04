@@ -187,11 +187,13 @@ case_config_variables_git_sans_effet() {
   # GIT_CONFIG_COUNT et GIT_CONFIG_PARAMETERS injectent des clés dans la configuration de git :
   # avec « -f », elles n'entrent pas dans la lecture du fichier.
   write_workflow_config "$work/projet" -review.timeout
+  # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
   run env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=review.timeout GIT_CONFIG_VALUE_0=900 \
     GIT_CONFIG_PARAMETERS="'review.timeout'='900'" \
     bash -c '. "$1/lib/config.sh"; config_load "$2"' _ "$common" "$work/projet/workflow.config"
   assert_eq 2 "$rc" "un champ absent du fichier reste absent"
   write_workflow_config "$work/projet"
+  # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
   run env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=forge.repo GIT_CONFIG_VALUE_0=Autre/depot \
     bash -c '. "$1/lib/config.sh"; config_load "$2" && config_get v forge.repo && echo "$v"' _ "$common" "$work/projet/workflow.config"
   assert_eq Proprietaire/projet-essai "$out" "une valeur du fichier n'est pas remplacée"

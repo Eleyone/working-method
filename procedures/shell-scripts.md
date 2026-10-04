@@ -9,7 +9,7 @@ Les scripts du dépôt commun (`lib/`, `gitea/`, `gates/`, `review/`, `checks/`,
 - **Ce qui est propre à un projet se lit dans son `workflow.config`** (`config_load`, puis `config_get`), jamais en dur : un nom de dépôt, une branche, un chemin, une commande. Le fichier est validé en entier avant toute action, et un refus sort en `2` (`workflow-config.md`).
 - Un message commence par le nom du script. Aucun message n'affiche une valeur de `.env`, l'adresse de la forge ou un contenu privé.
 - Identifiants en anglais ; messages, commentaires et procédures en français.
-- Aucun outil de plus sans décision : `bash`, `git`, `jq`, `curl` sur le poste, `grep` et outils de base. Le runner de la forge est un Alpine en mode hôte, avec les outils de BusyBox et sans `jq` (`runner-bash.md`) : la CI y télécharge `jq`, épinglé (`ci/ensure-jq.sh`).
+- Aucun outil de plus sans décision : `bash`, `git`, `jq`, `curl` sur le poste, `grep` et outils de base. Le runner de la forge est un Alpine en mode hôte, avec les outils de BusyBox et sans `jq` (`runner-bash.md`) : la CI y télécharge `jq` et `shellcheck`, épinglés par version et SHA-256 (`ci/ensure-jq.sh`, `ci/ensure-shellcheck.sh`).
 - La logique commune vit dans `lib/` : `shell.sh` (enveloppes des outils lancés en boucle), `config.sh` (lecture et validation de `workflow.config`, racine du projet), `dotenv.sh` (lecture d'un fichier d'environnement), `sprint.sh` (lecture du suivi de sprint, sans `jq`), `require-bash.sh` (prérequis bash, en POSIX sh) ; puis `gitea/gitea.sh` (environnement, API de la forge, fichier de motifs, base d'une PR) et `gates/merge-gates.sh` (décisions des verrous de fusion).
 - **Une parade s'écrit une fois.** Dupliquer une garde correcte est un défaut au même titre que l'oublier : la même lecture du code de `grep` avait fini en quatre exemplaires, dont le dernier est né le jour où l'avant-dernier a été écrit pour cette raison exacte (rétrospective de l'epic 3 du projet source). Avant d'écrire une enveloppe, chercher si elle existe dans `lib/shell.sh`.
 - Une fonction de bibliothèque ne compte pas sur `set -e` et vérifie chaque étape : appelée derrière `||`, elle n'en profiterait pas. Elle répond par son code de retour, comme une commande, et n'écrit rien sur la sortie standard en cas d'erreur.
@@ -20,7 +20,7 @@ Les scripts du dépôt commun (`lib/`, `gitea/`, `gates/`, `review/`, `checks/`,
 ```bash
 tests/run.sh                          # tous les cas du dépôt commun, arrêt au premier échec
 tests/run.sh tests/test-sprint.sh     # les cas d'un fichier
-ci/checks-job.sh                      # ce que lance la CI : tests, secrets, noms de projets
+ci/checks-job.sh                      # ce que lance la CI : tests, secrets, noms de projets, shellcheck
 ```
 
 Depuis un projet, `.working-method/tests/run.sh <fichiers>` lance les tests du projet avec le même harnais.
@@ -34,6 +34,18 @@ Code de sortie : `0` tous les cas réussis ; `1` un cas échoue (le script nomme
 - **Un cas sans objet ici** : `skip_case "<raison>"` (code 3), ou `skip_if_root "<ce qui est rendu illisible>"`. Le cas n'échoue pas et ne se tait pas : le résumé de `run.sh` compte les ignorés et donne leur raison. Un cas ne doit jamais rendre un verdict différent selon l'endroit où la suite tourne — s'il le fait, il s'ignore en le disant.
 - **Chaque garde a un test qui échoue sans elle** : le cas exerce l'entrée que la garde doit refuser, et il a été lancé une fois la garde retirée, pour le voir échouer.
 - **Tout nouveau piège** reçoit un cas de test et une ligne dans le tableau ci-dessous.
+
+## shellcheck
+
+`ci/checks-job.sh` lance, par `ci/run-shellcheck.sh`, shellcheck sur tous les scripts suivis (`*.sh`, `bin/check-bash`, `bin/install`, `bin/install.bash`), **à tous les niveaux** — erreurs, avertissements, informations et style —, avec le binaire de `ci/ensure-shellcheck.sh` : version **0.11.0**, empreinte SHA-256 vérifiée, téléchargé dans le dossier temporaire du job, rien d'installé sur le runner ; sur le poste, un shellcheck déjà présent n'est retenu que s'il est exactement de cette version (décision d'Arnaud du 04/10/2026).
+
+- **Pourquoi tous les niveaux** : les règles « information » sont précisément celles des pièges de ce dépôt — `A && B || C` lu comme un si-alors-sinon, un `$?` qui ne dit pas ce qu'on croit, une fonction jamais appelée. Bloquer sur les seules erreurs aurait laissé passer, au premier lancement, quatre `A && B || C` et quatorze apostrophes typographiques dans des chaînes entre apostrophes.
+- **Aucune exclusion globale.** `.shellcheckrc` ne règle que la lecture des fichiers chargés (`source-path=SCRIPTDIR`, `external-sources=true`). Une exclusion s'écrit sur la commande qu'elle concerne, **avec sa raison** : `# shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici`. Un constat qui se corrige se corrige ; une exclusion ne vaut que là où le code fait exactement ce que la règle croit être une erreur.
+- ⛔ **Une directive ne s'insère jamais dans une commande continuée par `\`** : le commentaire termine la ligne, et la suite de la commande devient une commande à part. shellcheck le signale (SC1126) ; un `sed` qui insère des directives à l'aveugle le provoquerait.
+- ⛔ **Un commentaire qui commence par le mot « shellcheck » est lu comme une directive** : `# shellcheck sur tous les scripts…` est une erreur de syntaxe pour shellcheck (SC1073), qui cesse alors d'analyser le fichier. Commencer la phrase autrement.
+- ⛔ **bash 4.3, pas plus** : `tests/test-ci-checks.sh` cherche dans les scripts suivis les constructions apparues après 4.3 (`mapfile -d`, `local -`, `${x@Q}`, `inherit_errexit`, `wait -p`, `EPOCHSECONDS`…). Ce que ce relevé ne voit pas, c'est un **tableau vide sous `set -u`** : bash 4.3 le tient pour non défini et arrête le script sur `"${t[@]}"`. Écrire `${t[@]+"${t[@]}"}` partout où le tableau peut être vide. Pour vérifier : `docker run --rm -v "$PWD:/repo" -w /repo bash:4.3 bash -c 'apk add -q git jq coreutils curl && git config --global --add safe.directory /repo && bash tests/run.sh'` (deux cas trouvés ainsi le 04/10/2026, dans `bin/install.bash` et `checks/run-checks.sh`).
+- Une bibliothèque chargée par `.` déclare son shell en première ligne (`# shellcheck shell=bash`, ou `sh` pour `lib/require-bash.sh`).
+- Une variable remplie par référence (`config_get`, `config_project_root`) est déclarée avant (`root=""`) ou figée après (`readonly`) : shellcheck ne voit pas l'affectation faite par `local -n`.
 
 ## Pièges connus
 

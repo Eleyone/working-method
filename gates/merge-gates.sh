@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Décisions des verrous de fusion de verify-and-merge-pr, séparées des appels à la forge pour être testées sur
 # des fichiers : pages de timeline, état combiné de la CI, réponse de la PR, commits d'un dépôt git.
 #
@@ -93,9 +94,9 @@ status_commit_ok() { # $1 SHA relu, $2 SHA de tête, $3 clé de la story, $4 sui
     [[ -n $f ]] || continue
     # le diff est lu d'abord : un échec de git diff refuse la règle au lieu de donner une liste vide
     diff_out=$(git diff -U0 "$reviewed" "$head" -- "$f") || { echo "diff de $f illisible"; return 1; }
-    removed=$(select_lines -E '^-' "$diff_out") && removed=$(select_lines -vE '^---( |$)' "$removed") \
+    { removed=$(select_lines -E '^-' "$diff_out") && removed=$(select_lines -vE '^---( |$)' "$removed"); } \
       || { echo "lecture du diff de $f impossible"; return 1; }
-    added=$(select_lines -E '^\+' "$diff_out") && added=$(select_lines -vE '^\+\+\+( |$)' "$added") \
+    { added=$(select_lines -E '^\+' "$diff_out") && added=$(select_lines -vE '^\+\+\+( |$)' "$added"); } \
       || { echo "lecture du diff de $f impossible"; return 1; }
     case $f in
       "$rule_status_file")
@@ -204,6 +205,7 @@ review_exemption() { # $1 expression régulière étendue ou none, $2 liste des 
   [[ -n $changed ]] || return 1
   while IFS= read -r file; do
     rc=0
+    # shellcheck disable=SC2319 # le code voulu est celui du test [[ =~ ]] : 2 dit une expression invalide
     [[ $file =~ $regex ]] 2>/dev/null || rc=$?
     case $rc in
       0) ;;                 # ce fichier correspond

@@ -14,6 +14,7 @@ case_depot_canonique_lu_dans_workflow_config() {
   new_repo
   write_workflow_config "$work/depot"
   git -C "$work/depot" remote add origin "git@forge.example.invalid:Proprietaire/projet-essai.git"
+  # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
   adaptateur "$work/depot" 'config_load workflow.config; gitea_configure; check_origin; echo "ok $gitea_canonical_repo"'
   assert_eq 0 "$rc" "origin est le dépôt déclaré (messages : $err)"
   assert_eq "ok Proprietaire/projet-essai" "$out" "le dépôt canonique vient de forge.repo"
@@ -64,6 +65,7 @@ case_base_d_une_pr() {
 
 case_env_file_nomme_dans_le_message() {
   new_repo
+  # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
   adaptateur "$work/depot" 'load_gitea_env "$PWD/secrets.env"'
   assert_eq 1 "$rc" "un fichier d'environnement absent arrête"
   assert_contains "secrets.env absent (forge.env-file)" "$err" "le message nomme le fichier déclaré"

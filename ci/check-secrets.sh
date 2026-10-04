@@ -29,6 +29,7 @@ readonly allowed_paths='(^|/)\.env\.(example|dist|sample)$'
 
 # Motifs de secrets de forme connue, une expression régulière étendue par ligne. Chacun est écrit pour
 # ne pas se trouver lui-même : la classe qui suit son préfixe ne contient pas « [ ».
+# shellcheck disable=SC2016 # expressions régulières : « $ », « { » et « } » y sont des caractères littéraux
 patterns=(
   '-----BEGIN ([A-Z]+ )*PRIVATE KEY( BLOCK)?-----'
   'gh[pousr]_[A-Za-z0-9]{36}'
@@ -101,7 +102,7 @@ scan_tree() {
 # Les lignes ajoutées par chaque commit sont écrites dans un fichier, une par ligne, et leur origine
 # (commit, chemin, ligne) dans un index parallèle ; grep cherche dans le premier, l'index nomme l'endroit.
 scan_history() {
-  local log rc=0 numbers number where
+  local rc=0 numbers number where
   git log "${range[@]}" --no-color --no-renames --no-ext-diff -p -U0 --format='commit %H' > "$tmp/log" \
     || die "lecture de l'historique impossible."
   awk -v content="$tmp/ajouts" -v index_file="$tmp/index" '
@@ -169,7 +170,7 @@ case $mode in
 esac
 
 if ((findings)); then
-  printf '%s: %s signalement(s) : retirer le secret, le révoquer s’il a été poussé, et réécrire l’historique avant tout push.\n' \
+  printf "%s: %s signalement(s) : retirer le secret, le révoquer s’il a été poussé, et réécrire l’historique avant tout push.\n" \
     "$script_name" "$findings" >&2
   exit 1
 fi

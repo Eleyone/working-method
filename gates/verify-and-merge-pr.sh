@@ -40,6 +40,7 @@ while (($#)); do
 done
 [[ -n $pr ]] || die "$usage"
 
+root=""
 config_project_root root || die "à lancer dans le dépôt."
 cd "$root"
 config_load "$root/workflow.config" || exit 2

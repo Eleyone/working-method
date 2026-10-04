@@ -23,6 +23,7 @@ config_project_root root || { echo "tests: à lancer dans un dépôt git." >&2; 
 cd "$root"
 config_load "$root/workflow.config" || exit 2
 config_get protected_outputs tests.protected-outputs
+readonly protected_outputs
 
 for tool in bash git jq grep awk sed mktemp find sort cmp; do
   command -v "$tool" >/dev/null 2>&1 || { echo "tests: $tool introuvable." >&2; exit 2; }

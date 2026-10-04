@@ -1,3 +1,4 @@
+# shellcheck shell=sh
 # Prérequis bash de tout l'outillage, vérifié AVANT la première ligne de bash : écrit en POSIX sh,
 # pour qu'un poste ou un runner sans bash, ou avec un bash trop ancien, reçoive un message et le
 # code 2 — jamais une erreur de syntaxe à mi-parcours (AC 9 de la story outillage-14).
@@ -16,7 +17,7 @@ require_bash_min_minor=3
 require_bash() {
   _rb_path=$(command -v bash 2>/dev/null) || _rb_path=""
   if [ -z "$_rb_path" ]; then
-    printf 'prérequis : bash est introuvable dans le PATH ; bash %s.%s ou plus est requis par l’outillage commun.\n' \
+    printf "prérequis : bash est introuvable dans le PATH ; bash %s.%s ou plus est requis par l’outillage commun.\n" \
       "$require_bash_min_major" "$require_bash_min_minor" >&2
     return 2
   fi
@@ -33,7 +34,7 @@ require_bash() {
     || { [ "$1" -eq "$require_bash_min_major" ] && [ "$2" -ge "$require_bash_min_minor" ]; }; then
     return 0
   fi
-  printf 'prérequis : bash %s.%s trouvé (%s) ; bash %s.%s ou plus est requis par l’outillage commun.\n' \
+  printf "prérequis : bash %s.%s trouvé (%s) ; bash %s.%s ou plus est requis par l’outillage commun.\n" \
     "$1" "$2" "$_rb_path" "$require_bash_min_major" "$require_bash_min_minor" >&2
   return 2
 }

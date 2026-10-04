@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Lecture du suivi de sprint (le fichier que désigne sprint.status-file dans workflow.config), en bash
 # et awk seuls, sans jq ni outil YAML : sprint-consistency.sh tourne aussi en CI.
 #

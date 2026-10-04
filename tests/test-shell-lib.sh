@@ -10,15 +10,18 @@ enveloppe() { # $1 = corps à exécuter après le chargement
 }
 
 case_shell_grep_into_trouve_et_ne_trouve_pas() {
+  # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
   enveloppe 'shell_grep_into v -c "shell_grep_into" "'"$common"'/lib/shell.sh"; echo "rc=$? v=$v"'
   assert_eq 0 "$rc" "une correspondance passe (messages : $err)"
   assert_contains "rc=0" "$out" "l'enveloppe rend 0"
+  # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
   enveloppe 'shell_grep_into v -F "zzz-motif-absent-zzz" "'"$common"'/lib/shell.sh"; echo "rc=$? v=[$v]"'
   assert_eq 0 "$rc" "rien trouvé n'est pas une erreur"
   assert_contains "rc=0 v=[]" "$out" "l'enveloppe rend 0 et la variable est vide : rendre 1 tuerait un appel nu sous set -e"
 }
 
 case_shell_grep_into_erreur_arrete() {
+  # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
   enveloppe 'shell_grep_into v -F "x" /fichier/qui/nexiste/pas; echo "jamais atteint"'
   assert_eq 2 "$rc" "une erreur de lecture arrête le script, code 2 (anomalie)"
   assert_contains "recherche impossible (grep, code 2)" "$err" "le message nomme l'outil et son code"

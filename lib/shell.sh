@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Enveloppes communes des outils que tous les scripts lancent en boucle. Écrites **une seule fois**
 # pour tout le dépôt : contrôles, tests, scripts opérationnels et bibliothèques de décision.
 #
@@ -38,6 +39,7 @@ shell_grep_status() { # $1 = nom de la variable à remplir, $2… = arguments de
   local shell_grep_code=0
   # le code est rendu tel quel : un message qui cite « code 127 » dit que grep est introuvable,
   # là où un code rabattu sur 2 ferait croire à un fichier illisible
+  # shellcheck disable=SC2034 # référence (local -n) : cette affectation remplit la variable de l'appelant
   shell_grep_destination=$(grep "$@") || shell_grep_code=$?
   return "$shell_grep_code"
 }

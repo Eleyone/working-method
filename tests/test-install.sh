@@ -147,12 +147,14 @@ case_check_bash_versions_admises() {
   for version in "4 3" "4 4" "5 0" "10 0"; do
     printf '#!/bin/sh\nprintf "%s"\n' "$version" > "$work/bin/bash"
     chmod +x "$work/bin/bash"
+    # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
     run env PATH="$work/bin" /bin/sh -c '. "$1/lib/require-bash.sh"; require_bash' _ "$common"
     assert_eq 0 "$rc" "bash $version est admis (messages : $err)"
   done
   for version in "3 2" "4 0" "" "x y" "5"; do
     printf '#!/bin/sh\nprintf "%s"\n' "$version" > "$work/bin/bash"
     chmod +x "$work/bin/bash"
+    # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
     run env PATH="$work/bin" /bin/sh -c '. "$1/lib/require-bash.sh"; require_bash' _ "$common"
     assert_eq 2 "$rc" "réponse « $version » refusée"
   done

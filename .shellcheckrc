@@ -1,0 +1,9 @@
+# Réglages de shellcheck pour ce dépôt. ci/checks-job.sh le lance à TOUS les niveaux (style compris),
+# avec le binaire épinglé de ci/ensure-shellcheck.sh ; aucune exclusion n'est globale : chacune est
+# écrite sur la ligne qu'elle concerne, avec sa raison (procedures/shell-scripts.md).
+#
+# Les chemins des directives « # shellcheck source=… » se lisent depuis le dossier du script, et les
+# fichiers chargés sont suivis : sans cela, les variables d'une bibliothèque passeraient pour non
+# assignées dans chaque script qui la charge.
+source-path=SCRIPTDIR
+external-sources=true

@@ -39,6 +39,7 @@ while (($#)); do
 done
 [[ -z $merge || $merge =~ ^[0-9]+\.[0-9]+[a-z]?$ ]] || die "numéro de story attendu après --merge, par exemple 0.6."
 
+root=""
 config_project_root root || die "à lancer dans le dépôt."
 cd "$root"
 config_load "$root/workflow.config" || exit 2
@@ -49,7 +50,7 @@ case $rc in
   0) ;;
   1) # --merge demande qu'une story soit à done : sans suivi, la question n'a pas de réponse
      [[ -z $merge ]] || die "--merge $merge impossible : suivi de sprint désactivé (sprint.convention = none)."
-     printf '%s: suivi de sprint désactivé (sprint.convention = none) : rien à contrôler, aucune cohérence n’est affirmée.\n' "$script_name"
+     printf "%s: suivi de sprint désactivé (sprint.convention = none) : rien à contrôler, aucune cohérence n’est affirmée.\n" "$script_name"
      exit 0 ;;
   *) die "$convention_reason" ;;
 esac
@@ -159,7 +160,7 @@ for number in "${!epic_status[@]}"; do
   if (( ${epic_waiting[$number]:-0} == total )); then
     expected=backlog
   elif (( ${epic_done[$number]:-0} == total )); then
-    expected=done
+    expected="done"
   else
     expected=in-progress
   fi
@@ -303,7 +304,7 @@ if [[ -n $merge ]]; then
     gap "story $merge absente du suivi : fusion refusée."
   elif ((rc != 0)); then
     gap "plusieurs stories correspondent à $merge dans le suivi : fusion refusée."
-  elif [[ ${story_status[$merge_key]:-} != done ]]; then
+  elif [[ ${story_status[$merge_key]:-} != "done" ]]; then
     gap "story $merge_key à ${story_status[$merge_key]} dans le suivi : fusion refusée tant qu'elle n'est pas à done."
   elif ! file_exists "$stories_dir/$merge_key.md"; then
     gap "story $merge_key sans fichier de story : fusion refusée."

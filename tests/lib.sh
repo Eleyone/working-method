@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Outils communs des fichiers de test, chargés en tête de chaque fichier de test : ceux du dépôt
 # commun (tests/test-*.sh) comme ceux d'un projet qui le consomme.
 #
@@ -12,10 +13,12 @@ set -euo pipefail
 # projet consommateur qui charge cette bibliothèque depuis ses propres tests garde donc ses chemins,
 # et le dépôt commun les siens.
 tests_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC2034 # lue par les fichiers de test qui chargent cette bibliothèque
 common=$(cd "$tests_dir/.." && pwd)
 caller_dir=$(cd "$(dirname "${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}")" && pwd)
 root=$(git -C "$caller_dir" rev-parse --show-toplevel 2>/dev/null) \
   || { echo "tests: $caller_dir n'est pas dans un dépôt git." >&2; exit 2; }
+# shellcheck disable=SC2034 # lue par les fichiers de test qui chargent cette bibliothèque
 fixtures="$caller_dir/fixtures"
 cd "$root"
 
@@ -26,8 +29,11 @@ trap 'chmod -R u+rwx "$work" 2>/dev/null || true; rm -rf "$work"' EXIT
 # Les fonctions testées ne comptent pas sur set -e : les appeler derrière || reflète leur usage réel.
 run() {
   rc=0
+  # shellcheck disable=SC2034 # lue par les fichiers de test qui chargent cette bibliothèque
   "$@" > "$work/.out" 2> "$work/.err" || rc=$?
+  # shellcheck disable=SC2034 # lue par les fichiers de test qui chargent cette bibliothèque
   out=$(cat "$work/.out")
+  # shellcheck disable=SC2034 # lue par les fichiers de test qui chargent cette bibliothèque
   err=$(cat "$work/.err")
 }
 

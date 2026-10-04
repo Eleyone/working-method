@@ -8,7 +8,10 @@
 #   2. tests/run.sh, toute la suite hors ligne ;
 #   3. ci/check-secrets.sh, aucun secret dans l'arbre ni dans l'historique (AC 11) ;
 #   4. ci/check-names.sh, aucun nom de projet consommateur dans l'arbre (AC 3) ;
-#   5. shellcheck sur les scripts, s'il est installé — sinon le job le dit, et ne le compte pas réussi.
+#   5. shellcheck sur tous les scripts, à TOUS les niveaux (style compris), avec le binaire épinglé que
+#      fournit ci/ensure-shellcheck.sh (décision d'Arnaud du 04/10/2026). Les exclusions sont écrites
+#      ligne par ligne, chacune avec sa raison ; aucune n'est globale (.shellcheckrc). Un shellcheck
+#      impossible à fournir fait échouer l'étape : jamais « non lancé » compté comme réussi.
 # Le prérequis bash est vérifié AVANT ce script, par bin/check-bash en POSIX sh (étape du workflow).
 #
 # Codes de sortie : 0 tout passe ; 1 au moins une étape en échec ; 2 jq impossible à fournir.
@@ -36,15 +39,7 @@ step() { # $1 libellé, $2… commande
 step "tests" bash tests/run.sh
 step "aucun secret" bash ci/check-secrets.sh
 step "aucun nom de projet" bash ci/check-names.sh
-if command -v shellcheck >/dev/null 2>&1; then
-  scripts=$(git ls-files -- '*.sh' bin/check-bash bin/install bin/install.bash) || { failed+=("shellcheck (liste des scripts illisible)"); scripts=""; }
-  if [[ -n $scripts ]]; then
-    mapfile -t script_list <<< "$scripts"
-    step "shellcheck (erreurs)" shellcheck -S error -x "${script_list[@]}"
-  fi
-else
-  printf '\n%s: --- shellcheck absent de cette machine : non lancé, et non compté comme réussi.\n' "$script_name"
-fi
+step "shellcheck (tous niveaux)" bash ci/run-shellcheck.sh
 
 printf '\n'
 if ((${#failed[@]})); then

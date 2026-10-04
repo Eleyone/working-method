@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Bibliothèque commune des scripts du poste de développement qui appellent la forge Gitea.
 #
 # À charger par « . gitea/gitea.sh » depuis un script qui a déjà coupé la trace du shell (set +x),

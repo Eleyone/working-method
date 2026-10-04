@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Lecture d'un fichier dotenv, seule du dépôt (story 2.4, constat D7 de la rétrospective de l'epic 0).
 #
 # À charger par « . lib/dotenv.sh ».

@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Lecteur de workflow.config, le fichier qui déclare ce qui est propre à un projet consommateur.
 #
 # À charger par « . lib/config.sh ». Dépendances : bash 4.3 ou plus, git.
@@ -83,8 +84,8 @@ config_check_type() {
     schema) [[ $value == 1 ]] || { echo "schéma « $value » inconnu de cet outillage (schéma connu : 1)"; return 1; } ;;
     repo) [[ $value =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "« propriétaire/nom » attendu"; return 1; } ;;
     branch)
-      [[ $value =~ ^[A-Za-z0-9._/-]+$ && $value != -* ]] \
-        && git check-ref-format --branch "$value" >/dev/null 2>&1 \
+      { [[ $value =~ ^[A-Za-z0-9._/-]+$ && $value != -* ]] \
+        && git check-ref-format --branch "$value" >/dev/null 2>&1; } \
         || { echo "nom de branche invalide"; return 1; }
       ;;
     words)
@@ -122,6 +123,7 @@ config_check_type() {
       # bash, pas grep : le grep de BusyBox (runner de la forge) rend 1 — « aucune correspondance » —
       # sur une expression invalide, là où GNU grep rend 2. « [[ =~ ]] » rend 2 sur les deux libc.
       local regex_code=0
+      # shellcheck disable=SC2319 # le code voulu est celui du test [[ =~ ]] : 2 dit une expression invalide
       [[ x =~ $value ]] 2>/dev/null || regex_code=$?
       ((regex_code <= 1)) || { echo "expression régulière étendue invalide"; return 1; }
       ;;
@@ -161,7 +163,7 @@ config_load() { # $1 = fichier
   git config -f "$file" --no-includes --null --list > "$raw" 2> /dev/null || git_code=$?
   if [[ $git_code != 0 ]]; then
     rm -f "$raw"
-    printf '%s : syntaxe refusée par git config (code %s) ; rien n’est lu.\n' "$file" "$git_code" >&2
+    printf "%s : syntaxe refusée par git config (code %s) ; rien n’est lu.\n" "$file" "$git_code" >&2
     return 2
   fi
   # Chaque entrée est « clé<LF>valeur<NUL> », ou « clé<NUL> » pour une clé écrite sans « = ».
@@ -249,6 +251,7 @@ config_get() { # $1 = variable à remplir, $2 = champ
   local -n config_destination=$1
   [[ -n $config_loaded ]] || { printf 'config_get %s : aucun workflow.config chargé.\n' "$2" >&2; return 2; }
   [[ -n ${config_schema[$2]+x} ]] || { printf 'config_get : champ « %s » hors schéma.\n' "$2" >&2; return 2; }
+  # shellcheck disable=SC2034 # référence (local -n) : cette affectation remplit la variable de l'appelant
   config_destination=${config_values[$2]}
 }
 
@@ -271,5 +274,6 @@ config_project_root() { # $1 = variable à remplir
     super=$(git rev-parse --show-superproject-working-tree 2> /dev/null) || return 2
     [[ -z $super ]] || top=$(cd "$super" && pwd -P) || return 2
   fi
+  # shellcheck disable=SC2034 # référence (local -n) : cette affectation remplit la variable de l'appelant
   config_root_destination=$top
 }

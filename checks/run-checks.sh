@@ -35,6 +35,7 @@ config_project_root root || { printf '%s: à lancer dans le dépôt du projet.\n
 cd "$root"
 config_load "$root/workflow.config" || exit 2
 config_get checks_dir checks.dir
+readonly checks_dir
 if [[ $checks_dir == none ]]; then
   printf '%s: aucun dossier de contrôles (checks.dir = none) : aucun contrôle lancé.\n' "$script_name"
   exit 0
@@ -57,10 +58,12 @@ anomaly=0
 # Le préfixe sert au chargeur de valeurs d'un projet : dans le projet source, sans lui, aucun contrôle
 # ne voyait les valeurs qu'il devait chercher dans la sortie — un garde-fou qui ne gardait rien
 # (constat de la revue de spec de la story 9.1 du projet source).
-for candidate in "${scripts[@]}"; do
+# « ${t[@]+…} » : sous set -u, bash 4.3 tient un tableau vide pour non défini (corrigé en 4.4)
+for candidate in ${scripts[@]+"${scripts[@]}"}; do
   name=$(basename "$candidate" .sh)
   rc=0
-  "${prefix[@]}" bash "$candidate" || rc=$?
+  # « ${t[@]+…} » : sous set -u, bash 4.3 tient un tableau vide pour non défini (corrigé en 4.4)
+  ${prefix[@]+"${prefix[@]}"} bash "$candidate" || rc=$?
   case $rc in
     0) ;;
     1) failed+=("$name") ;;

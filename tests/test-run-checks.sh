@@ -15,6 +15,7 @@ faux_depot() { # $1… = changements du workflow.config ; prépare $work/faux : 
 }
 
 controle() { # $1 = nom, $2 = code de sortie ; écrit un signalement au format commun
+  # shellcheck disable=SC2016 # contrôle factice écrit dans un fichier : ses « $ » s'y développent à l'exécution
   printf '#!/usr/bin/env bash\necho "contenu/%s.md: écart de %s" >&2\necho "niveau=${CHECK_LEVEL:-absent} enveloppe=${ENVELOPPE:-non} %s" >> "%s/faux/controles.log"\nexit %s\n' \
     "$1" "$1" "$1" "$work" "$2" > "$work/faux/scripts/checks/$1.sh"
 }
@@ -69,6 +70,15 @@ case_check_niveau_et_enveloppe_transmis() {
   assert_eq 0 "$rc" "le préfixe est accepté (messages : $err)"
   assert_eq "niveau=release enveloppe=oui a" "$(cat "$work/faux/controles.log")" "le contrôle tourne sous le préfixe, au niveau posé"
   assert_contains "niveau release" "$out" "le résumé nomme le niveau"
+}
+
+case_check_dossier_vide_le_dit() {
+  # aucun contrôle et aucun préfixe : deux tableaux vides, que bash 4.3 sous set -u tenait pour non
+  # définis (constaté en rejouant la suite sous bash 4.3.48, phase C de la story outillage-14)
+  faux_depot
+  lance
+  assert_eq 0 "$rc" "un dossier sans contrôle n'est pas une anomalie (messages : $err)"
+  assert_contains "aucun script de contrôle" "$out" "et le mécanisme le dit"
 }
 
 case_check_dossier_lu_dans_workflow_config() {

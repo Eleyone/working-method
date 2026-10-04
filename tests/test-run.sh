@@ -13,6 +13,7 @@ faux_depot() { # $1 = corps du cas d'essai, $2… = changements du workflow.conf
   # lib.sh charge les enveloppes communes, run.sh le lecteur de workflow.config : le faux dépôt les emporte
   cp "$common/lib/shell.sh" "$common/lib/config.sh" "$work/faux/lib/"
   : > "$work/faux/public/index.html"
+  # shellcheck disable=SC2016 # fichier de test factice écrit sur le disque : ses « $ » s'y développent à l'exécution
   printf '#!/usr/bin/env bash\n. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"\ncase_essai() {\n  %s\n}\nrun_case "$@"\n' "$corps" \
     > "$work/faux/tests/test-essai.sh"
   git -C "$work/faux" init -q
@@ -27,6 +28,7 @@ case_run_accepte_une_suite_qui_ne_touche_pas_les_sorties() {
 }
 
 case_run_refuse_une_suite_qui_efface_public() {
+  # shellcheck disable=SC2016 # corps de cas écrit dans le fichier factice : « $root » y est celui du cas
   faux_depot 'rm -rf "$root/public"'
   run bash -c 'cd "$1" && bash tests/run.sh' _ "$work/faux"
   assert_eq 1 "$rc" "une suite qui efface public/ échoue"
@@ -34,6 +36,7 @@ case_run_refuse_une_suite_qui_efface_public() {
 }
 
 case_run_refuse_une_suite_qui_cree_build() {
+  # shellcheck disable=SC2016 # corps de cas écrit dans le fichier factice : « $root » y est celui du cas
   faux_depot 'mkdir -p "$root/build/work"'
   run bash -c 'cd "$1" && bash tests/run.sh' _ "$work/faux"
   assert_eq 1 "$rc" "une suite qui crée build/ échoue"
@@ -41,15 +44,18 @@ case_run_refuse_une_suite_qui_cree_build() {
 
 case_run_sorties_lues_dans_workflow_config() {
   # Les sorties ne sont plus écrites dans le lanceur : un autre nom est protégé, public/ ne l'est plus.
+  # shellcheck disable=SC2016 # corps de cas écrit dans le fichier factice : « $root » y est celui du cas
   faux_depot 'mkdir -p "$root/dist"' "tests.protected-outputs=dist"
   run bash -c 'cd "$1" && bash tests/run.sh' _ "$work/faux"
   assert_eq 1 "$rc" "la sortie déclarée est protégée"
+  # shellcheck disable=SC2016 # corps de cas écrit dans le fichier factice : « $root » y est celui du cas
   faux_depot 'rm -rf "$root/public"' "tests.protected-outputs=dist"
   run bash -c 'cd "$1" && bash tests/run.sh' _ "$work/faux"
   assert_eq 0 "$rc" "une sortie non déclarée n'est pas relevée (messages : $err)"
 }
 
 case_run_none_le_dit() {
+  # shellcheck disable=SC2016 # corps de cas écrit dans le fichier factice : « $root » y est celui du cas
   faux_depot 'rm -rf "$root/public"' "tests.protected-outputs=none"
   run bash -c 'cd "$1" && bash tests/run.sh' _ "$work/faux"
   assert_eq 0 "$rc" "aucune sortie protégée : la suite passe (messages : $err)"

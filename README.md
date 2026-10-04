@@ -14,7 +14,7 @@ Ce dépôt ne connaît aucun projet : tout ce qui est propre à un projet se dé
 | `gates/` | verrous de fusion (`verify-and-merge-pr.sh`, `merge-gates.sh`) et cohérence du suivi de sprint (`sprint-consistency.sh`) |
 | `review/` | revue par un LLM d'un autre fournisseur (`llm-review.sh`), consignes communes (`prompts/`), couche projet de ce dépôt (`self-layer.md`) |
 | `checks/` | mécanisme des contrôles bloquants d'un projet (`run-checks.sh`) |
-| `ci/` | job de CI de ce dépôt, contrôles « aucun secret » et « aucun nom de projet », fourniture de `jq` |
+| `ci/` | job de CI de ce dépôt, contrôles « aucun secret » et « aucun nom de projet », fourniture de `jq` et de `shellcheck` épinglés |
 | `tests/` | harnais de test hors ligne (`run.sh`, `lib.sh`) et tests de tout ce qui précède |
 | `procedures/` | une procédure par outil ; `adoption.md` pour un nouveau projet |
 | `skills/` | stubs de skills, reliés dans chaque projet par `bin/install` |
@@ -30,5 +30,5 @@ Extrait le 03/10/2026, avec l'historique utile, du premier projet qui portait ce
 Toute modification passe par une PR vers `main` : revue par un LLM d'un autre fournisseur (`review/llm-review.sh`), CI verte (workflow `checks`), puis `gates/verify-and-merge-pr.sh`. `main` refuse tout push direct.
 
 ```bash
-bash ci/checks-job.sh      # ce que lance la CI : tests, aucun secret, aucun nom de projet
+bash ci/checks-job.sh      # ce que lance la CI : tests, aucun secret, aucun nom de projet, shellcheck
 ```

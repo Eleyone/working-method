@@ -31,6 +31,7 @@ while (($#)); do
 done
 [[ -z $body_file || $body_file == /* ]] || body_file="$PWD/$body_file"
 
+root=""
 config_project_root root || die "à lancer dans le dépôt."
 cd "$root"
 config_load "$root/workflow.config" || exit 2
@@ -40,6 +41,7 @@ config_get branch_prefixes forge.branch-prefixes
 config_get guard_command guard.command
 config_get guard_patterns guard.patterns-file
 config_get forge_env_file forge.env-file
+readonly forge_base release_branch branch_prefixes guard_command guard_patterns forge_env_file
 gitea_configure
 body_file=${body_file:-$root/.pr-body.md}
 [[ -n $title ]] || die "titre manquant : --title \"<titre>\"."

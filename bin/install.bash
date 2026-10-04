@@ -40,6 +40,7 @@ config_load "$project/workflow.config" || exit 2
 config_get skill_dirs agents.skill-dirs
 config_get bmad_version bmad.version
 config_get bmad_modules bmad.modules
+readonly skill_dirs bmad_version bmad_modules
 
 # --- plan : chaque lien attendu, avec sa cible relative -----------------------------------------
 links=()   # « chemin<TAB>cible »
@@ -87,12 +88,13 @@ done
 if ((${#conflicts[@]})); then
   printf '%s: %s conflit(s), aucun lien posé :\n' "$script_name" "${#conflicts[@]}" >&2
   printf '  - %s\n' "${conflicts[@]}" >&2
-  printf '%s: rien n’est écrasé : résoudre chaque conflit (procedures/adoption.md), puis relancer.\n' "$script_name" >&2
+  printf "%s: rien n’est écrasé : résoudre chaque conflit (procedures/adoption.md), puis relancer.\n" "$script_name" >&2
   exit 1
 fi
 
 # --- écriture ------------------------------------------------------------------------------------
-for link in "${todo[@]}"; do
+# « ${t[@]+…} » : sous set -u, bash 4.3 tient un tableau vide pour non défini (corrigé en 4.4)
+for link in ${todo[@]+"${todo[@]}"}; do
   path=${link%%$'\t'*}
   target=${link#*$'\t'}
   mkdir -p "$(dirname "$path")" || die "dossier de $path impossible à créer."
@@ -105,5 +107,5 @@ printf '%s: %s lien(s) posé(s), %s déjà en place.\n' "$script_name" "${#todo[
 # La story 1 relie ici les modules BMAD du dépôt commun, génère la configuration BMAD du projet depuis
 # workflow.config et refuse un écart de version. Tant qu'elle n'est pas faite, rien n'est installé —
 # et le script le dit plutôt que de laisser croire que BMAD vient du sous-module.
-printf '%s: BMAD %s (modules : %s) déclaré dans workflow.config : installation réservée à la story 1, rien n’est installé ni vérifié.\n' \
+printf "%s: BMAD %s (modules : %s) déclaré dans workflow.config : installation réservée à la story 1, rien n’est installé ni vérifié.\n" \
   "$script_name" "$bmad_version" "$bmad_modules"

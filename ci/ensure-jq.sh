@@ -50,6 +50,6 @@ if [ "$_sum" != "$JQ_SHA256" ]; then
     rm -f "$_tmp"
     die "empreinte SHA-256 inattendue pour jq ${JQ_VERSION} (attendu $JQ_SHA256, obtenu $_sum) : binaire refusé."
 fi
-chmod 755 "$_tmp" && mv "$_tmp" "$DEST/jq" || die "installation de jq dans $DEST impossible."
+{ chmod 755 "$_tmp" && mv "$_tmp" "$DEST/jq"; } || die "installation de jq dans $DEST impossible."
 "$DEST/jq" --version >/dev/null 2>&1 || die "le binaire jq téléchargé ne s'exécute pas."
 printf '%s\n' "$DEST"

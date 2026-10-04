@@ -283,11 +283,11 @@ prompt=${prompt//'{{BRANCH}}'/$branch}
 prompt=${prompt//'{{BASE}}'/$base}
 prompt=${prompt//'{{STORY}}'/$story_num}
 if [[ -n $context_file ]]; then
-  printf -v prompt '%s\n\nPrécisions de l’auteur de la PR :\n%s\n' "$prompt" "$(<"$context_file")"
+  printf -v prompt "%s\n\nPrécisions de l’auteur de la PR :\n%s\n" "$prompt" "$(<"$context_file")"
 fi
 
 # --- relecture ---------------------------------------------------------------------------------
-printf '%s: relecture par %s (angles : %s), jusqu’à %s min…\n' "$script_name" "$model" "$lenses" "$((review_timeout / 60))" >&2
+printf "%s: relecture par %s (angles : %s), jusqu’à %s min…\n" "$script_name" "$model" "$lenses" "$((review_timeout / 60))" >&2
 # agy rend la main une minute avant le délai dur, pour que son rapport ne soit pas coupé par timeout
 # (14 min pour 900 s, la valeur d'origine)
 print_timeout=$((review_timeout > 60 ? review_timeout - 60 : review_timeout))
@@ -368,6 +368,7 @@ fi
 if [[ -n $pr ]]; then
   {
     printf 'llm-review sha=%s base=%s model=%s verdict=%s\n\n' "$head_sha" "$base" "$model" "$verdict"
+    # shellcheck disable=SC2016 # accents graves du Markdown, pas une substitution de commande
     printf '_Revue par `review/llm-review.sh` du dépôt commun : `agy --mode plan`, copie isolée hors du dépôt au SHA relu, sans `.git` ni les chemins privés du projet (%s) ; méthode de revue de la couche projet appliquée par le relecteur (angles : %s, plus la couche propre au projet). Fichiers créés ou modifiés par le relecteur dans la copie : %s._\n\n' "$private_paths" "$lenses" "$written_label"
     cat "$tmp/rapport.md"
   } > "$tmp/commentaire.md"
@@ -378,6 +379,7 @@ if [[ -n $pr ]]; then
   printf '%s: revue publiée sur la PR n° %s : verdict %s (%s, SHA %s)\n' "$script_name" "$pr" "$verdict" "$model" "${head_sha:0:7}"
   section="## Revue du code"
   {
+    # shellcheck disable=SC2016 # accents graves du Markdown, pas une substitution de commande
     printf '### %s — `%s` — `%s` — verdict `%s`\n\n' "$(date +%d/%m/%Y)" "${head_sha:0:7}" "$model" "$verdict"
     printf 'Rapport publié en commentaire de la PR n° %s. Angles : %s, plus la couche propre au projet. Fichiers créés ou modifiés par le relecteur : %s.\n\n' "$pr" "$lenses" "$written_label"
     cat "$tmp/rapport-abaisse.md"
@@ -387,6 +389,7 @@ else
   cat "$tmp/rapport.md"
   section="## Revue de spec"
   {
+    # shellcheck disable=SC2016 # accents graves du Markdown, pas une substitution de commande
     printf '### %s — `%s` (angles : %s), `%s` à `%s`\n\n' "$(date +%d/%m/%Y)" "$model" "$lenses" "$forge_base" "${head_sha:0:7}"
     printf 'Fichiers créés ou modifiés par le relecteur : %s.\n\n' "$written_label"
     cat "$tmp/rapport-abaisse.md"
@@ -400,7 +403,7 @@ current_branch=$(git symbolic-ref --quiet --short HEAD || true)
 if [[ -z $story_file ]]; then
   printf '%s: aucune story associée : fichier de story non mis à jour.\n' "$script_name" >&2
 elif [[ -n $pr && $current_branch != "$branch" ]]; then
-  printf '%s: la branche courante n’est pas %s : fichier de story non mis à jour.\n' "$script_name" "$branch" >&2
+  printf "%s: la branche courante n’est pas %s : fichier de story non mis à jour.\n" "$script_name" "$branch" >&2
 else
   if [[ ! -f $story_file ]]; then
     if [[ -n $pr ]]; then
@@ -410,6 +413,7 @@ else
     status=$(sprint_story_status "$story_key" < "$root/$status_file") \
       || die "statut de la story $story_key illisible dans le suivi de sprint."
     title=$(head -n 1 "$tmp/spec.md" | sed 's/^### //')
+    # shellcheck disable=SC2016 # accents graves du Markdown, pas une substitution de commande
     printf '# %s\n\nStatus: %s\n\nSpec : `%s`, story %s.\n\n## Revue de spec\n\n## Revue du code\n\n## Reporté\n' \
       "$title" "${status:-backlog}" "$epics_file" "$story" > "$story_file"
   fi

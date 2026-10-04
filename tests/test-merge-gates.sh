@@ -29,6 +29,7 @@ llm-review sha=aaaaaaaa base=dev model=modele-essai verdict=pass" "$(cat "$work/
 case_timeline_page_incomplete() {
   cp "$fixtures/timeline/pleine-1.json" "$work/incomplete-1.json"
   scenario=incomplete
+  # shellcheck disable=SC2329 # appelée par son nom, passé à read_timeline_reports
   fetch_incomplete() { # page 1 pleine, page 2 d'un seul élément
     printf '%s\n' "$1" >> "$work/pages"
     if [[ $1 == 1 ]]; then cp "$work/incomplete-1.json" "$2"; else cp "$fixtures/timeline/incomplete-2.json" "$2"; fi
@@ -188,7 +189,7 @@ status_repo() {
 done_commit() { # changements admis par la règle du commit de statut
   printf 'last_updated: 2026-09-15\ndevelopment_status:\n  epic-0: in-progress\n  0-8-essai: done\n  0-9-autre: backlog\n' \
     > "$work/depot/$stories/sprint-status.yaml"
-  printf '# Story 0.8\n\nStatus: done\n\n## Revue du code\n\nrapport\n\nDécision de l’auteur.\n' > "$work/depot/$stories/0-8-essai.md"
+  printf "# Story 0.8\n\nStatus: done\n\n## Revue du code\n\nrapport\n\nDécision de l’auteur.\n" > "$work/depot/$stories/0-8-essai.md"
   printf -- '- entrée reportée\n' >> "$work/depot/$stories/deferred-work.md"
 }
 
@@ -211,6 +212,7 @@ case_commit_de_statut_variables_readonly_du_script() {
   done_commit
   commit_all "done" > /dev/null
   # verify-and-merge-pr.sh déclare ces noms en readonly : la règle doit utiliser ses arguments, sans erreur
+  # shellcheck disable=SC2034 # posées exprès, jamais lues : la règle ne doit pas dépendre des noms du script
   readonly status_file=ailleurs/sprint-status.yaml stories_dir=ailleurs
   check_rule
   assert_eq 0 "$rc" "commit de statut conforme malgré les readonly du script (raison : $out)"
@@ -245,6 +247,7 @@ case_commit_de_statut_grep_en_erreur() {
   reviewed=$(git -C "$work/depot" rev-parse HEAD)
   printf '# Travail reporté\n' > "$work/depot/$stories/deferred-work.md"
   commit_all "suppression dans deferred-work.md" > /dev/null
+  # shellcheck disable=SC2329 # remplace grep pour les fonctions appelées ensuite par check_rule
   grep() { return 2; } # une erreur de grep ne doit jamais valoir « aucune ligne supprimée »
   check_rule
   unset -f grep

@@ -49,6 +49,7 @@ grep -vE '^[[:space:]]*(#|$)' "$tmp/brut" > "$tmp/noms" || rc=$?
 # une expression invalide (procedures/shell-scripts.md)
 while IFS= read -r name; do
   rc=0
+  # shellcheck disable=SC2319 # le code voulu est celui du test [[ =~ ]] : 2 dit une expression invalide
   [[ x =~ $name ]] 2>/dev/null || rc=$?
   ((rc <= 1)) || die "expression invalide dans la liste des noms (ligne non affichée)."
 done < "$tmp/noms"
@@ -76,8 +77,8 @@ if ((rc == 0)); then
 fi
 
 if ((findings)); then
-  printf '%s: %s nom(s) de projet dans l’arbre : le lire dans workflow.config, ou le décrire sans le nommer.\n' \
+  printf "%s: %s nom(s) de projet dans l’arbre : le lire dans workflow.config, ou le décrire sans le nommer.\n" \
     "$script_name" "$findings" >&2
   exit 1
 fi
-printf '%s: aucun nom de projet consommateur dans l’arbre.\n' "$script_name"
+printf "%s: aucun nom de projet consommateur dans l’arbre.\n" "$script_name"

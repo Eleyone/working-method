@@ -21,7 +21,7 @@ sh bin/check-bash      # « check-bash : bash 5.3.9(1)-release », code 0
 | Labels | `ubuntu-latest`, `linux_amd64`, `docker`, `linux`, `x64`, `self-hosted`, tous en `:host` |
 | Système | Alpine 3.24.1, outils de BusyBox |
 | bash | `GNU bash, version 5.3.9(1)-release`, installé dans l'image depuis le 19/09/2026 |
-| Absents | `coreutils`, **`jq`** (fourni au job par `ci/ensure-jq.sh`, binaire épinglé par version et SHA-256), `shellcheck` |
+| Absents | `coreutils`, **`jq`** (fourni au job par `ci/ensure-jq.sh`, binaire épinglé par version et SHA-256), **`shellcheck`** (fourni au job par `ci/ensure-shellcheck.sh`, archive épinglée par version et SHA-256) |
 
 ⚠️ **Conséquences pour un script :**
 

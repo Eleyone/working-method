@@ -71,14 +71,14 @@ case_statut_guillemets_commentaire_indentation() {
   printf 'development_status:\n    0-8-x: "done"   # fini\n' > "$work/suivi.yaml"
   run sprint_story_status 0-8-x < "$work/suivi.yaml"
   assert_eq 0 "$rc" "code de retour"
-  assert_eq done "$out" "statut sans guillemets ni commentaire"
+  assert_eq "done" "$out" "statut sans guillemets ni commentaire"
 }
 
 case_statut_crlf() {
   printf 'development_status:\r\n  0-8-x: done\r\n' > "$work/suivi.yaml"
   run sprint_story_status 0-8-x < "$work/suivi.yaml"
   assert_eq 0 "$rc" "code de retour"
-  assert_eq done "$out" "statut sans retour chariot"
+  assert_eq "done" "$out" "statut sans retour chariot"
 }
 
 case_statut_sur_plusieurs_lignes() {

@@ -25,6 +25,7 @@ projet() { # $1… = changements du workflow.config
 lance() { # $1 script du dépôt commun, $2… arguments
   local script=$1
   shift
+  # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
   run env PATH="$work/bouchons:$PATH" bash -c 'cd "$1" && shift && bash "$@"' _ "$work/depot" "$common/$script" "$@"
 }
 
