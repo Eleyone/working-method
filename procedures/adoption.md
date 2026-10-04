@@ -7,6 +7,30 @@
 - bash 4.3 ou plus (`sh <sous-module>/bin/check-bash`), git, `jq`, `curl` ; `agy`, authentifié, pour la revue (`llm-review.md`).
 - Un jeton personnel de la forge dans le fichier d'environnement du projet (`gitea-token.md`).
 
+## 0. Réglages de la forge : la branche par défaut est la branche de travail
+
+⛔ **La branche par défaut du dépôt est sa branche d'intégration** — `forge.base` du `workflow.config`, là où tout se développe —, pas la branche de publication. Règle posée le 04/10/2026, pour tous les projets ; chaque story d'adoption la relève et l'applique.
+
+**Motif** : deux mécanismes lisent la branche par défaut, et seulement elle.
+
+- **Renovate** lit sa configuration (`renovate.json`, et le preset qu'il étend) sur la branche par défaut. Si c'est la branche de publication, un correctif mergé dans la branche d'intégration n'agit qu'après une publication ; une PR de migration de configuration vise la branche de publication directement, hors du chemin normal. Constaté dans le projet source : une contrainte de version corrigée en intégration est restée fausse un mois, et la PR de migration proposait de la régresser.
+- **Les `schedule:` de Gitea Actions** ne sont enregistrés que depuis la branche par défaut, au commit du **dernier push** sur elle (Gitea 1.27.3, `services/actions/notifier_helper.go`). Un cron ajouté ou corrigé en intégration ne part qu'une fois arrivé sur la branche par défaut.
+
+**Appliquer, au moment de l'adoption** : dans l'interface de la forge (*Paramètres → Branches → Branche par défaut*), choisir la branche d'intégration. Puis relire la valeur affichée : elle doit être `forge.base`. La story d'adoption note la valeur avant et après, et la date.
+
+⏳ **Instrumentation à venir** : un script du dépôt commun relèvera et appliquera ce réglage par l'API, avec ses tests (ticket ouvert dans le projet source, à reporter ici quand il sera livré). D'ici là, le geste est manuel, dans l'interface.
+
+Ce que le changement déplace, à relire **avant** de l'appliquer, dans la story d'adoption :
+
+- **Chaque cron** tourne ensuite avec la version de la branche d'intégration du workflow, sur un commit d'intégration. Un cron qui doit juger la **production** (audit de dépendances, contrôle des artefacts publiés) fait un checkout explicite de la branche de publication (`ref:`) ; un cron qui **supprime** quelque chose (purge de registre) porte une garde, puisqu'il perd le filtre de la publication.
+- **`workflow_run`** : Gitea 1.27.3 exécute la version de la branche **par défaut** du workflow déclenché (`WorkflowRunStatusUpdate`, ref de la branche par défaut), quel que soit le filtre `branches:` — qui porte, lui, sur le run déclencheur.
+- **Planifications existantes** : le changement dans l'interface les **supprime**, et annule les crons en cours ; aucun cron ne tourne avant le **push suivant** sur la nouvelle branche par défaut, qui les réenregistre depuis son commit. À vérifier après ce push : un run planifié dans l'onglet Actions, sur la branche d'intégration, au SHA de ce push. (Par l'API, Gitea 1.27.3 les laisse en place sur le dernier commit de l'ancienne branche, jusqu'au même push.)
+- **Un run planifié ne pose aucun statut de commit** (`commit_status.go`, « don't create commit status for cron job ») : il se voit dans l'onglet Actions et par courriel, jamais sur un commit.
+- **PR** : l'interface propose la branche par défaut comme base. Une PR de publication choisit sa base explicitement.
+- **Clones existants** : leur `origin/HEAD` reste sur l'ancienne branche ; chaque poste le réaligne sur la nouvelle branche par défaut. Les scripts du dépôt commun nomment leurs branches et n'en dépendent pas.
+
+Le retour arrière (même chemin, valeur inverse, et ce qu'il faut revérifier) s'écrit dans une note du projet, puisque l'opération est manuelle.
+
 ## 1. Ajouter le sous-module
 
 ```bash
@@ -49,6 +73,8 @@ Il vérifie bash, valide `workflow.config`, puis pose `.working-method` (si beso
 - **CI** : le checkout initialise le sous-module (`submodules: recursive`, authentifié), et le premier pas vérifie bash en `shell: sh` (`sh .working-method/bin/check-bash`). Un run sans sous-module **échoue** : il ne passe jamais en ignorant des fichiers manquants.
 - **Worktrees jetables** (commit de clôture, revue) : `git submodule update --init` dans le worktree, pour que les gates y voient la même méthode que le poste.
 - **Renovate** : `renovate.json` étend le preset partagé et **garde son propre `branchPrefix`** (`renovate.md`) ; une PR de montée du sous-module doit déclencher la CI du projet, vérifié sur le run.
+
+  ⚠️ Renovate lit cette configuration sur la branche par défaut : l'étape 0 doit être faite, sinon le `renovate.json` de l'adoption n'agit qu'après une publication.
 
 ## 6. `AGENTS.md`
 

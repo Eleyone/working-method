@@ -20,4 +20,6 @@ Le dépôt commun publie `renovate/default.json`, un preset que chaque projet **
 
 ⛔ **Une PR de montée sans job lancé est un échec, pas un succès** (AC 10 de la story outillage-14) : après l'adoption, faire ouvrir une PR de montée du sous-module par Renovate sur une branche d'essai, et vérifier **sur le run** que la CI du projet a démarré et que ses gates ont tourné.
 
+⛔ Renovate lit `renovate.json` sur la **branche par défaut** du projet : elle doit être sa branche d'intégration (`adoption.md`, étape 0), sans quoi une modification de la configuration attend une publication pour agir.
+
 ⚠️ La forge exige une connexion pour lire (`REQUIRE_SIGNIN_VIEW`) : le compte de Renovate doit pouvoir lire ce dépôt, sans quoi il ne trouve ni le preset ni les commits du sous-module.
