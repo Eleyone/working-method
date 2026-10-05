@@ -58,6 +58,12 @@ Il vérifie bash, valide `workflow.config`, vérifie BMAD (version, modules, `_b
 
 - **Conflit** (code `1`, aucun lien posé) : le projet a déjà un skill du même nom. **Choisir et écrire** lequel sert — jamais deux skills homonymes qui se masquent. Si c'est le skill commun, retirer celui du projet dans la même PR, puis relancer ; si c'est celui du projet, `bin/install` refusera tant qu'il porte ce nom : la décision et sa mise en œuvre (renommer le skill du projet, par exemple) s'écrivent dans la story d'adoption.
 - **BMAD** (`bmad.md`, « Passer un projet sur le BMAD du sous-module ») : les copies locales de BMAD (skills `bmad-*` de chaque dossier d'outil, `_bmad/scripts`, `_bmad/<module>/module-help.csv`, `_bmad/_config/`) sont **supprimées dans la même PR** ; sinon chacune est un conflit. Écrire `_bmad/config.user.toml` (couche utilisatrice, jamais écrite par `bin/install`) et ignorer `_bmad/*/config.yaml` (générés, non versionnés) avant de lancer `bin/install`. ⛔ L'installeur BMAD ne se lance **jamais** dans le projet : il écrirait à travers les liens, dans le sous-module.
+- **Skills homonymes dont le script commun ne sert pas encore le projet** (constaté à la deuxième adoption : une convention de suivi de sprint, ou une forme de rapport de revue, que l'outillage commun refuse en `2`). Le projet garde ses scripts et **renomme ses skills**, avec un préfixe propre au projet. Le skill commun reste relié et refuse en `2` ; l'`AGENTS.md` du projet dit lequel sert.
+- **Réglages propres à un module BMAD** (par exemple les chemins d'artefacts ou le cadre de test d'un module de test) : ils vont dans les surcharges `[module "<nom>"]` de `workflow.config` (`workflow-config.md`, « Surcharges des modules BMAD »), jamais dans une édition du `config.yaml` généré.
+- **Un script du projet qui recopie ses skills d'un dossier d'outil à l'autre doit ignorer les liens.** Sinon il remplace un lien par une copie, que `bin/install` refuse ensuite comme un conflit. Un dossier de skills qui est lui-même un lien vers le dossier d'un autre outil est accepté.
+- **La suppression des copies touche des milliers de fichiers.**
+  - Un `.gitattributes` (`-diff`) n'en montre que la liste à la revue.
+  - Le gate de fusion du projet doit pourtant lire **toute** la liste des fichiers de la PR. Il la lit **page par page, jusqu'à une page vide** : la fin ne se déduit jamais d'une page plus courte que demandée, puisque Gitea rend au plus 50 entrées quel que soit `limit`. Au-delà d'un nombre maximal de pages, il **refuse**, jamais il ne fusionne sur une liste tronquée. Ce nombre doit couvrir la PR d'adoption, et le plafond qu'annonce le refus se calcule sur la taille de page réellement rendue. Le gate commun (`gates/verify-and-merge-pr.sh`) n'a pas ce problème : il lit la liste par `git diff --name-only` entre la base et la tête, sans l'API ; la règle vaut pour un gate propre au projet qui passe par l'API.
 - Relancé, il ne change rien : les liens posés se commitent avec le reste.
 - ⚠️ **Les liens doivent être suivis** par chaque outil d'agent visé (Claude Code, Cursor, Antigravity) : le vérifier en **chargeant une skill** dans chacun, pas en le supposant (AC 8).
 
@@ -71,8 +77,10 @@ Il vérifie bash, valide `workflow.config`, vérifie BMAD (version, modules, `_b
 ## 5. CI, worktrees jetables, Renovate
 
 - **CI** : le checkout initialise le sous-module (`submodules: recursive`, authentifié), et le premier pas vérifie bash en `shell: sh` (`sh .working-method/bin/check-bash`). Un run sans sous-module **échoue** : il ne passe jamais en ignorant des fichiers manquants.
+- **Réinstallation prouvée en CI** (recommandé). La couche utilisatrice n'est pas versionnée : le job écrit une `_bmad/config.user.toml` de CI, relance `bin/install`, puis exige un `git status` vide et aucun lien de skill mort. Cela suppose `_bmad/config.user.toml` et les `config.yaml` ignorés par git (étape 3).
+- **Image** : un Dockerfile qui copie tout le contexte (`COPY . .`) **doit** exclure le sous-module par `.dockerignore`.
 - **Worktrees jetables** (commit de clôture, revue) : `git submodule update --init` dans le worktree, pour que les gates y voient la même méthode que le poste.
-- **Renovate** : `renovate.json` étend le preset partagé et **garde son propre `branchPrefix`** (`renovate.md`) ; une PR de montée du sous-module doit déclencher la CI du projet, vérifié sur le run.
+- **Renovate** : `renovate.json` étend le preset partagé et **garde son propre `branchPrefix`** (`renovate.md`) ; une PR de montée du sous-module doit déclencher la CI du projet, vérifié sur le run. Si la CI ne se déclenche que sur certains préfixes de branche, la PR de montée doit en porter un.
 
   ⚠️ Renovate lit cette configuration sur la branche par défaut : l'étape 0 doit être faite, sinon le `renovate.json` de l'adoption n'agit qu'après une publication.
 
