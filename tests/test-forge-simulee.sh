@@ -345,13 +345,135 @@ case_revue_exporte_le_sous_module() {
     "$(jq -r .body "$work/corps" | head -n 1)" "première ligne du rapport publié"
 }
 
-case_revue_sous_module_non_initialise() {
-  projet_avec_sous_module
+# Un dossier de sous-module vide : clone sans « submodule update », ou « submodule deinit ». Sans .git
+# à lui, « git -C <dossier> » y interroge le dépôt PARENT.
+sous_module_vide() {
   git -C "$depot" submodule deinit -q -f commun
   rm -rf "$depot/.git/modules/commun"
+  [[ -d $depot/commun && ! -e $depot/commun/.git ]] \
+    || { echo "préparation : dossier du sous-module attendu, sans .git" >&2; exit 1; }
+}
+
+# La revue refuse en 2 (elle ne peut pas conclure), sans lancer le relecteur ni rien publier.
+# $1 = la raison, entre parenthèses dans le message : chaque garde est reconnue à la sienne.
+revue_refusee_sous_module_non_initialise() {
   revue
-  assert_eq 1 "$rc" "un sous-module absent arrête la revue"
-  assert_contains "sous-module commun non initialisé" "$err" "le message nomme le sous-module et le remède"
+  assert_eq 2 "$rc" "un sous-module non initialisé : la revue ne peut pas conclure (messages : $err)"
+  assert_contains "sous-module commun non initialisé ($1)" "$err" "le message nomme le sous-module et la garde"
+  assert_contains "git submodule update --init" "$err" "le message nomme le remède"
+  [[ ! -e $work/copie-vue ]] || { echo "le relecteur a été lancé sur une copie incomplète" >&2; exit 1; }
+  aucune_ecriture
+}
+
+case_revue_sous_module_non_initialise() {
+  # le dépôt parent n'a pas le commit du sous-module : le refus ne doit pas tenir à ce hasard
+  projet_avec_sous_module
+  sous_module_vide
+  ! git -C "$depot" cat-file -e "$(git -C "$depot" rev-parse "$branche:commun")^{commit}" 2>/dev/null \
+    || { echo "préparation : le dépôt parent a déjà le commit du sous-module" >&2; exit 1; }
+  revue_refusee_sous_module_non_initialise "son dossier relève du dépôt parent"
+}
+
+case_revue_sous_module_vide_et_commit_dans_le_parent() {
+  # le dépôt parent a le commit du sous-module (récupéré par un « git fetch », par exemple) : « git -C
+  # <dossier vide> » le trouve, et « git archive », lancé depuis ce sous-dossier du parent, n'en exporte
+  # que le sous-arbre « commun/ » de ce commit, vide. Sans refus, le relecteur verrait un dossier vide.
+  projet_avec_sous_module
+  sous_module_vide
+  git -C "$depot" -c protocol.file.allow=always fetch -q "$work/commun" HEAD
+  git -C "$depot" cat-file -e "$(git -C "$depot" rev-parse "$branche:commun")^{commit}" \
+    || { echo "préparation : le dépôt parent n'a pas le commit du sous-module" >&2; exit 1; }
+  revue_refusee_sous_module_non_initialise "son dossier relève du dépôt parent"
+}
+
+case_revue_sous_module_au_git_invalide() {
+  # un .git présent mais qui n'est pas un dépôt (dossier vide) : git l'ignore et remonte au parent, qui a
+  # le commit. La présence d'un .git ne suffit pas : le sous-module doit être sa propre racine.
+  projet_avec_sous_module
+  sous_module_vide
+  mkdir "$depot/commun/.git"
+  git -C "$depot" -c protocol.file.allow=always fetch -q "$work/commun" HEAD
+  revue_refusee_sous_module_non_initialise "son dossier relève du dépôt parent"
+}
+
+case_revue_sous_module_illisible() {
+  # un .git qui désigne un dépôt absent : git refuse de lire le dossier, au lieu de remonter au parent
+  projet_avec_sous_module
+  sous_module_vide
+  printf 'gitdir: %s\n' "$work/nulle-part" > "$depot/commun/.git"
+  revue_refusee_sous_module_non_initialise "git ne le lit pas"
+}
+
+case_revue_sous_module_supprime() {
+  # une PR qui supprime le sous-module : git écrit « (submodule deleted) », sans contenu, qu'il ait ou non
+  # l'ancien commit — la suppression se lit dans le diff, et la revue a lieu
+  projet_avec_sous_module
+  git -C "$depot" checkout -q "$branche"
+  git -C "$depot" rm -q commun
+  git -C "$depot" commit -q -m "chore: retire le sous-module"
+  git -C "$depot" push -q -f "$nu" "$branche"
+  git -C "$depot" checkout -q dev
+  rm -rf "$depot/.git/modules/commun"
+  forge_prete
+  revue
+  assert_eq 0 "$rc" "la revue est publiée (messages : $err)"
+  assert_contains "Submodule commun " "$(cat "$work/diff-vu")" "le diff nomme le sous-module"
+  assert_contains "(submodule deleted)" "$(cat "$work/diff-vu")" "la suppression se lit dans le diff"
+}
+
+case_revue_sous_module_sans_le_commit_de_la_base() {
+  # initialisé, avec le commit de la tête, mais sans celui de la base : « git diff --submodule=diff »
+  # n'écrirait que « (commits not present) », en code 0, et la montée ne se lirait plus comme un diff.
+  # La tête épingle un commit sans parent, puis tout ce qui n'en descend pas est purgé du sous-module.
+  projet_avec_sous_module
+  git -C "$work/commun" checkout -q --orphan seul
+  printf 'echo outil v3\n' > "$work/commun/outil.sh"
+  git -C "$work/commun" commit -q -am "outil v3"
+  local v3
+  v3=$(git -C "$work/commun" rev-parse HEAD)
+  git -C "$depot/commun" -c protocol.file.allow=always fetch -q origin seul
+  git -C "$depot/commun" checkout -q "$v3"
+  git -C "$depot/commun" for-each-ref --format='%(refname)' | while read -r ref; do
+    git -C "$depot/commun" update-ref -d "$ref"
+  done
+  git -C "$depot/commun" reflog expire --expire=now --all
+  git -C "$depot/commun" gc -q --prune=now
+  git -C "$depot" checkout -q "$branche"
+  git -C "$depot" add commun
+  git -C "$depot" commit -q -m "chore: monte le sous-module en v3"
+  git -C "$depot" push -q -f "$nu" "$branche"
+  git -C "$depot" checkout -q dev
+  ! git -C "$depot/commun" cat-file -e "$(git -C "$depot" rev-parse dev:commun)^{commit}" 2>/dev/null \
+    || { echo "préparation : le commit de la base est encore dans le sous-module" >&2; exit 1; }
+  forge_prete
+  revue
+  assert_eq 2 "$rc" "un sous-module sans le commit de la base : la revue ne peut pas conclure (messages : $err)"
+  assert_contains "sous-module commun sans le commit $(git -C "$depot" rev-parse --short=7 dev:commun) de la base" "$err" "le message nomme le cas"
+  [[ ! -e $work/copie-vue ]] || { echo "le relecteur a été lancé sur une copie incomplète" >&2; exit 1; }
+  aucune_ecriture
+}
+
+case_revue_export_vide_du_sous_module() {
+  # ceinture : si git exportait encore, pour un sous-module, une archive sans entrée, la copie n'aurait
+  # pas son code. Le faux git rend une archive vide, en code 0.
+  projet_avec_sous_module
+  {
+    printf '#!/usr/bin/env bash\nvrai=%q\n' "$(command -v git)"
+    cat <<'FAUX'
+if [[ "$*" == *"/commun archive "* ]]; then
+  while (($#)); do
+    [[ $1 != -o ]] || { tar -c -f "$2" -T /dev/null; exit; }
+    shift
+  done
+  exec tar -c -f - -T /dev/null
+fi
+exec "$vrai" "$@"
+FAUX
+  } > "$work/bin/git"
+  chmod +x "$work/bin/git"
+  revue
+  assert_eq 2 "$rc" "un export vide du sous-module : la revue ne peut pas conclure (messages : $err)"
+  assert_contains "export du sous-module commun vide" "$err" "le message nomme le sous-module"
   [[ ! -e $work/copie-vue ]] || { echo "le relecteur a été lancé sur une copie incomplète" >&2; exit 1; }
   aucune_ecriture
 }
@@ -370,7 +492,7 @@ case_revue_sous_module_sans_le_commit() {
   ! git -C "$depot/commun" cat-file -e "$(git -C "$depot" rev-parse "origin/$branche:commun" 2>/dev/null || git -C "$depot" rev-parse "$branche:commun")^{commit}" 2>/dev/null \
     || { echo "préparation : le commit épinglé est encore là" >&2; exit 1; }
   revue
-  assert_eq 1 "$rc" "un sous-module sans le commit épinglé arrête la revue"
+  assert_eq 2 "$rc" "un sous-module sans le commit épinglé : la revue ne peut pas conclure"
   assert_contains "sans le commit" "$err" "le message nomme le cas"
   [[ ! -e $work/copie-vue ]] || { echo "le relecteur a été lancé sur une copie incomplète" >&2; exit 1; }
   aucune_ecriture
@@ -410,6 +532,24 @@ case_revue_export_du_sous_module_impossible() {
   projet_avec_sous_module
   faux_qui_echoue git '/commun ' 'archive'
   revue_refusee "export du sous-module commun impossible"
+}
+
+case_revue_export_du_sous_module_illisible() {
+  projet_avec_sous_module
+  faux_qui_echoue tar '-t' 'sous-module\.tar'
+  revue_refusee "export du sous-module commun illisible"
+}
+
+case_revue_extraction_du_sous_module_impossible() {
+  projet_avec_sous_module
+  faux_qui_echoue tar '-x' 'sous-module\.tar'
+  revue_refusee "export du sous-module commun impossible"
+}
+
+case_revue_liste_des_sous_modules_modifies_impossible() {
+  projet_avec_sous_module
+  faux_qui_echoue git '^diff ' '--raw'
+  revue_refusee "diff de la PR impossible"
 }
 
 case_revue_diff_de_la_pr_impossible() {

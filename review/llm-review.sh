@@ -85,8 +85,12 @@ readonly reviewers review_timeout review_report project_layer private_paths \
 
 # Ce que l'outillage ne sait pas encore servir, ou que le projet a désactivé, sort ici en 2 — le code
 # d'une configuration qui ne permet pas l'action —, avant toute lecture de la forge. Les autres refus
-# du script gardent le code 1 du projet source.
+# du script gardent le code 1 du projet source, sauf un : la copie isolée à laquelle manquerait le code
+# d'un sous-module (die_incomplete_copy, plus bas).
 die_config() { printf '%s: %b\n' "$script_name" "$*" >&2; exit 2; }
+# Sous-module non initialisé, sans le commit épinglé, ou dont l'export est vide : la copie isolée ne
+# peut pas être construite, la revue ne peut donc pas conclure — code 2 de la convention à trois codes.
+die_incomplete_copy() { printf '%s: %b\n' "$script_name" "$*" >&2; exit 2; }
 
 # Le relecteur : l'entrée du fournisseur de l'auteur dans review.reviewers. La table est validée au
 # chargement (un relecteur du même fournisseur que l'auteur y est refusé) ; un auteur sans entrée ne
@@ -240,18 +244,34 @@ git archive --format=tar "$head_sha" | tar -x -C "$copy" || die "export de la co
 # commit relu épingle, depuis le sous-module initialisé du poste. Sans lui, le relecteur d'un projet
 # consommateur ne verrait plus l'outillage que ses scripts appellent — ce dépôt commun compris, qu'il
 # voyait avant son extraction (story outillage-14, phase C). Un sous-module absent, ou qui n'a pas ce
-# commit, arrête la revue : jamais une copie à laquelle il manquerait du code en silence.
+# commit, arrête la revue en 2 : jamais une copie à laquelle il manquerait du code en silence.
+# ⚠️ Un dossier de sous-module VIDE (clone sans « submodule update », « submodule deinit ») n'a pas de
+# .git — ou un .git qui n'est pas un dépôt : « git -C » y remonte au dépôt PARENT. Si le parent a le
+# commit épinglé (récupéré par un fetch), « git archive », lancé depuis ce sous-dossier du parent,
+# n'exporte que le sous-arbre de ce commit, vide, et sort en 0. Le sous-module doit donc être sa propre
+# racine : « rev-parse --show-prefix » y rend une ligne vide, et « <chemin>/ » quand le parent répond.
+# Un export sans aucune entrée est refusé aussi, au cas où une autre configuration de git ferait encore
+# répondre le parent.
+remedy="« git submodule update --init » avant la revue."
 git ls-tree -r -z "$head_sha" > "$tmp/arbre" || die "lecture de l'arbre du commit relu impossible."
 while IFS= read -r -d '' entry; do
   [[ $entry == "160000 commit "* ]] || continue
   sub_path=${entry#*$'\t'}
   sub_sha=${entry%%$'\t'*}
   sub_sha=${sub_sha##* }
-  git -C "$root/$sub_path" cat-file -e "$sub_sha^{commit}" 2>/dev/null \
-    || die "sous-module $sub_path non initialisé, ou sans le commit ${sub_sha:0:7} : « git submodule update --init » avant la revue."
+  sub_dir=$root/$sub_path
+  sub_prefix=$(git -C "$sub_dir" rev-parse --show-prefix 2>/dev/null) \
+    || die_incomplete_copy "sous-module $sub_path non initialisé (git ne le lit pas) : $remedy"
+  [[ -z $sub_prefix ]] \
+    || die_incomplete_copy "sous-module $sub_path non initialisé (son dossier relève du dépôt parent) : $remedy"
+  git -C "$sub_dir" cat-file -e "$sub_sha^{commit}" 2>/dev/null \
+    || die_incomplete_copy "sous-module $sub_path sans le commit ${sub_sha:0:7} : $remedy"
   mkdir -p "$copy/$sub_path" || die "création de $sub_path dans la copie isolée impossible."
-  git -C "$root/$sub_path" archive --format=tar "$sub_sha" | tar -x -C "$copy/$sub_path" \
+  git -C "$sub_dir" archive --format=tar -o "$tmp/sous-module.tar" "$sub_sha" \
     || die "export du sous-module $sub_path impossible."
+  sub_entries=$(tar -t -f "$tmp/sous-module.tar") || die "export du sous-module $sub_path illisible."
+  [[ -n $sub_entries ]] || die_incomplete_copy "export du sous-module $sub_path vide : aucun fichier au commit ${sub_sha:0:7}. $remedy"
+  tar -x -f "$tmp/sous-module.tar" -C "$copy/$sub_path" || die "export du sous-module $sub_path impossible."
 done < "$tmp/arbre"
 # .git toujours, puis les chemins privés du projet (review.private-paths)
 for private in .git $private_paths; do
@@ -266,8 +286,21 @@ fi
 canary=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
 [[ ${#canary} == 24 ]] || die "création du jeton de lecture impossible."
 if [[ -n $pr ]]; then
+  # --submodule=diff : la montée d'un sous-module se lit comme le diff de son code, pas comme deux SHA.
+  # ⚠️ Sans le commit que la base épingle, git n'écrit que « (commits not present) », en code 0 : le
+  # relecteur ne verrait pas le code monté. Chaque sous-module modifié doit donc avoir aussi ce commit
+  # (son dossier a été vérifié plus haut : il est dans l'arbre du commit relu). Un sous-module supprimé
+  # n'est pas concerné : git écrit « (submodule deleted) » sans contenu, qu'il ait ou non l'ancien commit.
+  git diff --raw -z --no-abbrev --no-renames "$base_sha...$head_sha" > "$tmp/diff-brut" \
+    || die "diff de la PR impossible."
+  while IFS= read -r -d '' meta && IFS= read -r -d '' changed_path; do
+    [[ $meta == ":160000 160000 "* ]] || continue
+    old_sha=${meta#:160000 160000 }
+    old_sha=${old_sha%% *}
+    git -C "$root/$changed_path" cat-file -e "$old_sha^{commit}" 2>/dev/null \
+      || die_incomplete_copy "sous-module $changed_path sans le commit ${old_sha:0:7} de la base : sa montée ne se lirait pas comme un diff de code. $remedy"
+  done < "$tmp/diff-brut"
   printf '# jeton-de-lecture: %s\n' "$canary" > "$copy/$content_name"
-  # --submodule=diff : la montée d'un sous-module se lit comme le diff de son code, pas comme deux SHA
   git diff --submodule=diff "$base_sha...$head_sha" >> "$copy/$content_name" || die "diff de la PR impossible."
 elif [[ -n $range ]]; then
   # Les artefacts de cadrage (review.range-exclude) sont écartés du diff : le relecteur les a déjà
