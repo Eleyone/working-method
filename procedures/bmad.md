@@ -90,7 +90,7 @@ du projet, donc **dans le sous-module**. Le contrôle « sous-module propre » l
 
 Dans la PR d'adoption (ou de montée) du projet :
 
-1. `workflow.config` au **schéma 2** : `bmad.version` (celle du sous-module), `bmad.modules` (le
+1. `workflow.config` au **schéma 3** : `bmad.version` (celle du sous-module), `bmad.modules` (le
    sous-ensemble utile, `core` compris), `bmad.project-name`, `bmad.document-output-language`,
    `bmad.output-folder` (`workflow-config.md`).
 2. **Supprimer les copies locales** : chaque skill `bmad-*` des dossiers d'outil, `_bmad/scripts/`,
@@ -117,7 +117,7 @@ skills qui en ont besoin les créent à l'usage.
 |---|---|
 | `0` | installé, ou déjà en place ; une édition à la main de la configuration générée est **écrasée et signalée** (`ATTENTION`) |
 | `1` | `bmad.version` différente de la version du sous-module (les deux sont nommées) ; module activé hors de l'union (`wds`, `render`…) ; `core` absent ; conflit (copie locale, lien étranger, `config.yaml` suivi par git) |
-| `2` | `workflow.config` refusé ou au schéma 1 ; `bmad/bmad.config` ou `bmad/method/` du sous-module illisibles ou incomplets ; `_bmad/config.user.toml` absent, hors du format lu, ou sans une clé attendue |
+| `2` | `workflow.config` refusé (au schéma 1 ou 2 notamment) ; `bmad/bmad.config` ou `bmad/method/` du sous-module illisibles ou incomplets ; `_bmad/config.user.toml` absent, hors du format lu, ou sans une clé attendue |
 
 Relancé, `bin/install` ne change rien — ni un lien, ni un fichier, ni une date. Un module désactivé
 perd ses liens et son `config.yaml` généré à l'installation suivante, et le script le dit.

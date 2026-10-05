@@ -37,8 +37,10 @@
 # Procédure : procedures/workflow-config.md
 
 # Le schéma : champ → type. Un « ? » en tête du type marque un champ désactivable par « none ».
-# Deux schémas sont lus (procedures/workflow-config.md, « Changer de schéma ») : le 2 ajoute les trois
-# champs de config_since_schema, que la configuration BMAD générée par bin/install demande (story 1).
+# Seul le schéma 3 est lu (procedures/workflow-config.md, « Changer de schéma ») : il remplace les deux
+# relecteurs nommés des schémas 1 et 2 par la table review.reviewers, ouverte à tout fournisseur. Un
+# fichier au schéma 1 ou 2 est refusé avec ce qu'il faut changer, jamais lu « au mieux » : il porterait
+# les anciennes clés, que plus aucun outil ne lit.
 declare -gA config_schema=(
   [workflow.schema]=schema
   [forge.repo]=repo
@@ -52,8 +54,7 @@ declare -gA config_schema=(
   [sprint.spec-source]=?path
   [review.exempt-paths]=?regex
   [review.report]=report
-  [review.reviewer-for-claude]=model
-  [review.reviewer-for-gemini]=model
+  [review.reviewers]=reviewers
   [review.timeout]=integer
   [review.project-layer]=path
   [review.private-paths]=paths
@@ -74,10 +75,18 @@ declare -gA config_schema=(
   [agents.skill-dirs]=paths
 )
 # Le schéma à partir duquel un champ existe ; un champ absent de cette table existe depuis le schéma 1.
+# Il sert aux messages : un fichier d'un schéma ancien est refusé, mais chaque écart y est nommé.
 declare -gA config_since_schema=(
   [bmad.project-name]=2
   [bmad.document-output-language]=2
   [bmad.output-folder]=2
+  [review.reviewers]=3
+)
+# Les champs retirés, et ce qui les remplace : présents, ils font refuser le fichier avec la nouvelle
+# forme, quel que soit le schéma déclaré — jamais une clé ignorée en silence.
+declare -gA config_removed=(
+  [review.reviewer-for-claude]="retiré au schéma 3 : la table review.reviewers le remplace, une entrée « auteur=modèle » par fournisseur d'auteur (« reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-4-6-thinking »)"
+  [review.reviewer-for-gemini]="retiré au schéma 3 : la table review.reviewers le remplace, une entrée « auteur=modèle » par fournisseur d'auteur (« reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-4-6-thinking »)"
 )
 declare -gA config_values=()
 config_loaded=""
@@ -92,7 +101,18 @@ config_fields() {
 config_check_type() {
   local value=$1 type=$2 word
   case $type in
-    schema) [[ $value == 1 || $value == 2 ]] || { echo "schéma « $value » inconnu de cet outillage (schémas connus : 1, 2)"; return 1; } ;;
+    schema)
+      case $value in
+        3) ;;
+        1|2)
+          local added=""
+          [[ $value == 2 ]] || added=", et bmad.project-name, bmad.document-output-language, bmad.output-folder s'ajoutent"
+          echo "schéma $value retiré : le schéma 3 est attendu — review.reviewer-for-claude et review.reviewer-for-gemini y sont remplacés par la table review.reviewers$added (procedures/workflow-config.md, « Changer de schéma »)"
+          return 1
+          ;;
+        *) echo "schéma « $value » inconnu de cet outillage (schéma lu : 3)"; return 1 ;;
+      esac
+      ;;
     repo) [[ $value =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "« propriétaire/nom » attendu"; return 1; } ;;
     branch)
       { [[ $value =~ ^[A-Za-z0-9._/-]+$ && $value != -* ]] \
@@ -125,7 +145,7 @@ config_check_type() {
         *) echo "« pr-comment » ou « file » attendu"; return 1 ;;
       esac
       ;;
-    model) [[ $value =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "nom de modèle attendu (minuscules, chiffres, « . », « - »)"; return 1; } ;;
+    reviewers) config_check_reviewers "$value" || return 1 ;;
     integer) [[ $value =~ ^[1-9][0-9]{0,5}$ ]] || { echo "entier positif attendu"; return 1; } ;;
     boolean)
       # « true » ou « false » seulement : git accepte aussi yes, on, 1…, que ce lecteur ne lit pas
@@ -158,6 +178,29 @@ config_check_type() {
       ;;
     *) echo "type « $type » inconnu du lecteur"; return 1 ;;
   esac
+  return 0
+}
+
+# La table « fournisseur de l'auteur → relecteur » : des entrées « auteur=modèle », séparées par une
+# espace. L'auteur est nommé par son fournisseur (claude, gemini, gpt…) ; le fournisseur d'un modèle est
+# le premier segment de son nom dans « agy models » (gemini-3.1-pro-high → gemini). ⛔ Une entrée dont
+# le relecteur est du même fournisseur que l'auteur est refusée : c'est la règle de la revue croisée, et
+# la configuration ne doit pas pouvoir la contourner. Un fournisseur s'ajoute par une entrée, jamais
+# par du code.
+config_check_reviewers() { # $1 = valeur
+  local entry author model
+  local -A authors=()
+  [[ $1 =~ ^[^[:space:]]+( [^[:space:]]+)*$ ]] \
+    || { echo "entrées « auteur=modèle » attendues, séparées par une espace"; return 1; }
+  for entry in $1; do
+    [[ $entry =~ ^([a-z][a-z0-9]*)=([a-z0-9][a-z0-9.-]*)$ ]] \
+      || { echo "« $entry » : entrée « auteur=modèle » attendue (auteur : son fournisseur en minuscules, par exemple claude ; modèle : un nom de « agy models »)"; return 1; }
+    author=${BASH_REMATCH[1]} model=${BASH_REMATCH[2]}
+    [[ -z ${authors[$author]+x} ]] || { echo "« $author » a deux entrées ; un seul relecteur par fournisseur d'auteur"; return 1; }
+    authors[$author]=1
+    [[ ${model%%-*} != "$author" ]] \
+      || { echo "« $entry » : le relecteur est du même fournisseur que l'auteur ($author) ; la revue croisée exige un autre fournisseur"; return 1; }
+  done
   return 0
 }
 
@@ -218,9 +261,15 @@ config_load() { # $1 = fichier
   rm -f "$raw"
   # Le schéma du fichier décide des champs attendus. Illisible, il est signalé par la vérification de
   # type ci-dessous, et les champs sont comptés au dernier schéma.
-  local level=2
-  [[ ${values[workflow.schema]:-} == 1 ]] && level=1
+  local level=3
+  case ${values[workflow.schema]:-} in
+    1|2) level=${values[workflow.schema]} ;;
+  esac
   for key in "${!seen[@]}"; do
+    if [[ -n ${config_removed[$key]+x} ]]; then
+      problems+=("$key : ${config_removed[$key]}.")
+      continue
+    fi
     if [[ -z ${config_schema[$key]+x} ]]; then
       problems+=("$key : champ inconnu du schéma $level (section ou clé hors schéma, sous-section ou include compris).")
       continue

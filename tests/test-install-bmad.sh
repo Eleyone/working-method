@@ -185,12 +185,20 @@ case_module_hors_de_l_union_rend_1() {
   assert_contains "core" "$err" "et nommé"
 }
 
-case_schema_1_refuse_pour_bmad() {
-  projet workflow.schema=1 -bmad.project-name -bmad.document-output-language -bmad.output-folder
+case_schema_1_ou_2_refuse() {
+  projet workflow.schema=1 -bmad.project-name -bmad.document-output-language -bmad.output-folder -review.reviewers \
+    review.reviewer-for-claude=gemini-3.1-pro-high review.reviewer-for-gemini=claude-opus-4-6-thinking
   installe
   assert_eq 2 "$rc" "un workflow.config au schéma 1 ne dit pas comment générer la configuration BMAD"
-  assert_contains "workflow.config est au schéma 1 : la configuration BMAD demande le schéma 2" "$err" "le schéma requis est nommé, avant toute autre lecture"
+  assert_contains "schéma 1 retiré : le schéma 3 est attendu" "$err" "le schéma requis est nommé, avant toute autre lecture"
   rien_d_ecrit "schéma 1"
+  rm -rf "$work/depot" "$work/commun"
+  projet workflow.schema=2 -review.reviewers \
+    review.reviewer-for-claude=gemini-3.1-pro-high review.reviewer-for-gemini=claude-opus-4-6-thinking
+  installe
+  assert_eq 2 "$rc" "un workflow.config au schéma 2 porte les anciennes clés de relecteur"
+  assert_contains "review.reviewer-for-claude : retiré au schéma 3 : la table review.reviewers le remplace" "$err" "la nouvelle forme est nommée"
+  rien_d_ecrit "schéma 2"
 }
 
 case_config_user_absente_ou_illisible_rend_2() {

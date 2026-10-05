@@ -1,4 +1,4 @@
-# workflow.config — ce qui est propre à un projet qui consomme le dépôt commun. Schéma 1.
+# workflow.config — ce qui est propre à un projet qui consomme le dépôt commun. Schéma 3.
 #
 # À la racine du projet, versionné. Format de git config, lu par
 # « git config -f workflow.config --no-includes --null --list ».
@@ -18,8 +18,8 @@
 # Description de chaque champ : procedures/workflow-config.md du dépôt commun.
 
 [workflow]
-	# version du schéma : 2 (le 1 se lit encore, mais bin/install ne génère la configuration BMAD qu'au 2)
-	schema = 2
+	# version du schéma : 3, le seul lu ; un fichier au schéma 1 ou 2 est refusé avec ce qu'il faut changer
+	schema = 3
 
 [forge]
 	# dépôt sur la forge, « propriétaire/nom » ; le dépôt distant origin doit être celui-là
@@ -49,9 +49,10 @@
 	exempt-paths = ^_bmad-output/
 	# où va le rapport de revue : pr-comment, ou file (story 8)
 	report = pr-comment
-	# relecteur d'un auteur Claude, et d'un auteur Gemini (noms de « agy models »)
-	reviewer-for-claude = gemini-3.1-pro-high
-	reviewer-for-gemini = claude-opus-4-6-thinking
+	# table « fournisseur de l'auteur → relecteur » : une entrée « auteur=modèle » par fournisseur d'auteur
+	# (claude, gemini, gpt…), le modèle pris dans « agy models » et d'un AUTRE fournisseur (premier segment
+	# de son nom) ; un auteur sans entrée fait sortir la revue en 2, sans relecteur par défaut
+	reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-4-6-thinking gpt=claude-opus-4-6-thinking
 	# délai maximal de la relecture, en secondes
 	timeout = 900
 	# fragment de consigne propre au projet : description, contexte, méthode de revue, contrôles
@@ -90,7 +91,7 @@
 	version = 6.12.0
 	# modules activés, parmi l'union du sous-module (core bmm bmb cis bmad-loop tea) ; core est requis
 	modules = core bmm
-	# schéma 2 : valeurs de la configuration BMAD que bin/install génère (procedures/bmad.md)
+	# valeurs de la configuration BMAD que bin/install génère (procedures/bmad.md)
 	project-name = projet-exemple
 	document-output-language = Français
 	output-folder = _bmad-output

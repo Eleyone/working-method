@@ -79,7 +79,7 @@ write_workflow_config() { # $1 = dossier, $2… = changements
   mkdir -p "$dir"
   : > "$file"
   local -a base=(
-    workflow.schema=2
+    workflow.schema=3
     forge.repo=Proprietaire/projet-essai
     forge.base=dev
     forge.release-branch=main
@@ -91,8 +91,7 @@ write_workflow_config() { # $1 = dossier, $2… = changements
     sprint.spec-source=_bmad-output/planning-artifacts/epics.md
     "review.exempt-paths=^_bmad-output/"
     review.report=pr-comment
-    review.reviewer-for-claude=gemini-3.1-pro-high
-    review.reviewer-for-gemini=claude-opus-4-6-thinking
+    "review.reviewers=claude=gemini-3.1-pro-high gemini=claude-opus-4-6-thinking gpt=claude-opus-4-6-thinking"
     review.timeout=900
     review.project-layer=review/project-layer.md
     "review.private-paths=.env docs/private .pr-body.md"

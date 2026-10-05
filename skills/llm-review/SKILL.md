@@ -13,7 +13,7 @@ La procédure fait foi : `.working-method/procedures/llm-review.md`. L'exécutio
 
 - au début de chaque story, sur sa branche : revue de spec par `--story <n.m>`, puis tri de chaque constat dans le fichier de story, avant de reformuler la story et de poser les questions au responsable du projet ;
 - sur chaque PR, après le commit de statut `review` : revue du code par le numéro de la PR ; le verdict est publié en commentaire, puis chaque constat reçoit sa décision dans la section « Revue du code » du fichier de story ;
-- tu ne relis jamais à la place du relecteur, et tu ne changes pas de modèle : l'auteur Claude est relu par le modèle de `review.reviewer-for-claude`, un auteur Gemini (`AUTHOR_LLM=gemini`) par celui de `review.reviewer-for-gemini` ;
+- tu ne relis jamais à la place du relecteur, et tu ne changes pas de modèle : `AUTHOR_LLM` nomme le fournisseur de l'auteur (`claude` par défaut, `gemini`, `gpt`…), et le relecteur est le modèle de son entrée dans la table `review.reviewers` ; un fournisseur sans entrée fait sortir la revue en `2`, sans relecteur par défaut ;
 - la revue dure plusieurs minutes : lance-la en arrière-plan et attends sa fin ;
 - un échec ne publie rien : corrige la cause indiquée, puis relance.
 - pour une **rétrospective d'epic**, `--range "<premier>^..<dernier>" --out <fichier>` relit le diff complet de la plage et n'écrit que dans ce fichier : rien n'est publié, et c'est la rétrospective qui cite le rapport après avoir rejoué chaque constat.

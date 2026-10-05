@@ -329,7 +329,7 @@ projet_avec_sous_module() {
   api POST "/repos/$repo/issues/$pr/comments" '{}' 201
 }
 
-revue() {
+revue() { # AUTHOR_LLM est transmis s'il est posé : « AUTHOR_LLM=gpt revue »
   # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
   run env PATH="$work/bin:$PATH" GIT_SSH_COMMAND="$work/bin/ssh" TMPDIR="$work" \
     bash -c 'cd "$1" && shift && bash "$@"' _ "$depot" "$common/review/llm-review.sh" "$pr"
@@ -416,6 +416,68 @@ case_revue_diff_de_la_pr_impossible() {
   projet_avec_sous_module
   faux_qui_echoue git '^diff ' '--submodule=diff'
   revue_refusee "diff de la PR impossible"
+}
+
+# --- llm-review : la table « fournisseur de l'auteur → relecteur » (review.reviewers) -------------
+
+# Le projet nominal, avec la table donnée ; $1 = valeur de review.reviewers
+projet_avec_table() {
+  projet "review.reviewers=$1"
+  faux_agy
+  forge_prete
+  api POST "/repos/$repo/issues/$pr/comments" '{}' 201
+}
+
+case_revue_auteur_couvert_relu_par_le_modele_de_sa_ligne() {
+  local auteur modele
+  for auteur in claude gemini gpt; do
+    # chaque auteur sur un projet neuf : la forge simulée garde ses appels, ses corps et ses rangs
+    rm -rf "${work:?}/depot" "${work:?}/forge" "${work:?}/bin" "${work:?}/api" "${work:?}/appels" \
+      "${work:?}/corps" "${work:?}"/rang-* "${work:?}/copie-vue"
+    projet_avec_table "claude=gemini-3.1-pro-high gemini=claude-opus-4-6-thinking gpt=claude-opus-5-5-high"
+    case $auteur in
+      claude) modele=gemini-3.1-pro-high ;;
+      gemini) modele=claude-opus-4-6-thinking ;;
+      gpt) modele=claude-opus-5-5-high ;;
+    esac
+    AUTHOR_LLM=$auteur revue
+    assert_eq 0 "$rc" "auteur $auteur : la revue est publiée (messages : $err)"
+    assert_eq "llm-review sha=$(tete) base=dev model=$modele verdict=pass" \
+      "$(jq -r .body "$work/corps" | head -n 1)" "auteur $auteur : relu par le modèle de sa ligne"
+  done
+}
+
+case_revue_auteur_non_couvert_rend_2_sans_relecteur() {
+  projet_avec_table "claude=gemini-3.1-pro-high gemini=claude-opus-4-6-thinking"
+  AUTHOR_LLM=gpt revue
+  assert_eq 2 "$rc" "un fournisseur d'auteur sans entrée : la revue ne peut pas conclure"
+  assert_contains "AUTHOR_LLM=gpt : fournisseur d'auteur absent de la table review.reviewers (couverts : claude gemini)" "$err" "le message nomme l'auteur et les fournisseurs couverts"
+  [[ ! -e $work/copie-vue ]] || { echo "un relecteur a été appelé pour un auteur non couvert" >&2; exit 1; }
+  assert_eq "" "$(appels)" "aucun appel à la forge"
+  # une casse différente n'est pas une entrée : pas de rapprochement, pas de défaut
+  AUTHOR_LLM=Claude revue
+  assert_eq 2 "$rc" "« Claude » n'est pas « claude »"
+  [[ ! -e $work/copie-vue ]] || { echo "un relecteur a été appelé pour « Claude »" >&2; exit 1; }
+}
+
+case_revue_relecteur_du_meme_fournisseur_rend_2() {
+  projet_avec_table "claude=gemini-3.1-pro-high gemini=gemini-3.8-flash-high"
+  AUTHOR_LLM=claude revue
+  assert_eq 2 "$rc" "une table qui contourne la revue croisée est refusée, pour tout auteur"
+  assert_contains "le relecteur est du même fournisseur que l'auteur (gemini)" "$err" "la ligne fautive est nommée"
+  [[ ! -e $work/copie-vue ]] || { echo "un relecteur a été appelé malgré une table refusée" >&2; exit 1; }
+  assert_eq "" "$(appels)" "aucun appel à la forge"
+}
+
+case_revue_anciennes_cles_rendent_2_avec_la_nouvelle_forme() {
+  projet workflow.schema=2 -review.reviewers review.reviewer-for-claude=gemini-3.1-pro-high \
+    review.reviewer-for-gemini=claude-opus-4-6-thinking
+  faux_agy
+  revue
+  assert_eq 2 "$rc" "un workflow.config aux anciennes clés est refusé"
+  assert_contains "review.reviewer-for-claude : retiré au schéma 3 : la table review.reviewers le remplace" "$err" "la nouvelle forme est nommée"
+  [[ ! -e $work/copie-vue ]] || { echo "un relecteur a été appelé sur une configuration refusée" >&2; exit 1; }
+  assert_eq "" "$(appels)" "aucun appel à la forge"
 }
 
 run_case "$@"

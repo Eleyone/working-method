@@ -12,14 +12,21 @@ Aucune spec ni aucun merge ne repose sur la seule relecture du modèle qui a éc
 
 ## Relecteurs
 
-Le relecteur vient toujours d'un autre fournisseur que l'auteur. Les modèles sont déclarés par le projet dans `workflow.config` : aucune option de la ligne de commande ne permet d'en changer.
+Le relecteur vient toujours d'un autre fournisseur que l'auteur. Les modèles sont déclarés par le projet dans la table `review.reviewers` de son `workflow.config` (`workflow-config.md`, « La table des relecteurs ») : aucune option de la ligne de commande ne permet d'en changer.
 
-| Auteur (`AUTHOR_LLM`) | Relecteur | Champ de `workflow.config` | Valeur du projet source (relevée le 14/09/2026, `agy` 1.2.2) |
-|---|---|---|---|
-| `claude` (défaut) | un modèle Gemini | `review.reviewer-for-claude` | `gemini-3.1-pro-high` |
-| `gemini` | un modèle Claude | `review.reviewer-for-gemini` | `claude-opus-4-6-thinking` |
+- `AUTHOR_LLM` nomme le **fournisseur** de l'auteur, en minuscules : `claude` (la valeur par défaut, si la variable n'est pas posée), `gemini`, `gpt` (Codex et les autres agents GPT)… Le relecteur est le modèle de son entrée dans la table.
+- ⛔ Un auteur **sans entrée** fait sortir la revue en code `2`, **avant tout appel** au relecteur ni à la forge : il n'existe pas de relecteur par défaut. Le message nomme les fournisseurs couverts. Pour un nouveau fournisseur, on ajoute une entrée à la table — jamais du code.
+- ⛔ La table elle-même refuse (code `2`, au chargement) une entrée dont le relecteur est du même fournisseur que l'auteur : le fournisseur d'un modèle est le premier segment de son nom.
 
-Toute autre valeur d'`AUTHOR_LLM` est refusée. Le délai de la relecture est `review.timeout`, en secondes ; `agy` rend la main une minute avant.
+Exemple (valeurs du projet source, relevées le 14/09/2026, `agy` 1.2.2, et entrée GPT ajoutée le 05/10/2026) :
+
+| Auteur (`AUTHOR_LLM`) | Entrée de la table | Relecteur |
+|---|---|---|
+| `claude` (défaut) | `claude=gemini-3.1-pro-high` | un modèle Gemini |
+| `gemini` | `gemini=claude-opus-4-6-thinking` | un modèle Claude |
+| `gpt` | `gpt=claude-opus-4-6-thinking` | un modèle Claude |
+
+Le délai de la relecture est `review.timeout`, en secondes ; `agy` rend la main une minute avant.
 
 Le relecteur applique la méthode de revue que nomme la couche projet — dans le projet source, le skill de revue BMAD `bmad-review`, qu'il lit comme un fichier dans la copie isolée. L'auteur ne relit jamais à sa place. `bmad-code-review` n'est pas utilisé : il s'arrête pour attendre des réponses.
 
@@ -105,8 +112,8 @@ Les consignes elles-mêmes sont versionnées dans le dépôt commun (`review/pro
 Dans l'ordre. Tout refus avant la relecture n'envoie rien au relecteur ; tout refus après la relecture ne publie rien.
 
 1. La trace du shell est coupée, puis `jq`, `curl`, `agy` et `timeout` sont présents.
-2. Exactement un usage est demandé : `--story <n.m>`, un numéro de PR ou `--range` ; `AUTHOR_LLM` vaut `claude` ou `gemini`.
-3. `workflow.config` est lu et validé en entier ; une valeur que l'outillage ne sait pas encore servir (`review.report = file`, `sprint.convention = keyed`) l'arrête en `2`, en nommant la story qui l'apportera ; la couche projet existe et n'est pas vide.
+2. Exactement un usage est demandé : `--story <n.m>`, un numéro de PR ou `--range`.
+3. `workflow.config` est lu et validé en entier — table `review.reviewers` comprise : une entrée dont le relecteur est du même fournisseur que l'auteur, ou une ancienne clé `review.reviewer-for-*`, l'arrête en `2` ; le fournisseur d'`AUTHOR_LLM` a une entrée dans la table, sinon `2`, sans relecteur par défaut ; une valeur que l'outillage ne sait pas encore servir (`review.report = file`, `sprint.convention = keyed`) l'arrête en `2`, en nommant la story qui l'apportera ; la couche projet existe et n'est pas vide.
 4. Le dépôt distant `origin` est celui de `forge.repo`.
 5. Si le projet a un garde-fou, son fichier de motifs existe et contient au moins un motif ; le fichier de contexte, s'il est donné, ne contient aucun motif privé.
 6. Revue du code : le fichier d'environnement est lu par `gitea/gitea.sh`, sans afficher de valeur, et le jeton appartient à `GITEA_USER` ; la PR est ouverte ; sa base, sa branche et son SHA de tête sont lus par l'API, puis récupérés depuis la forge ; la branche n'a pas bougé entre-temps. Revue de spec : la tête de la base est lue sur la forge, et la story figure dans le suivi de sprint.

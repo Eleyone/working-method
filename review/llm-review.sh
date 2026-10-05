@@ -7,8 +7,9 @@
 #                                                        rien n'est publié, le rapport va sur la sortie
 #                                                        standard ou dans le fichier désigné
 #
-# AUTHOR_LLM=claude (défaut) → relecteur review.reviewer-for-claude ; AUTHOR_LLM=gemini → relecteur
-# review.reviewer-for-gemini (workflow.config). Le relecteur applique la méthode de revue que nomme la
+# AUTHOR_LLM nomme le fournisseur de l'auteur (claude par défaut, gemini, gpt…) ; le relecteur est le
+# modèle de son entrée dans la table review.reviewers (workflow.config). Un fournisseur sans entrée sort
+# en 2 avant tout appel : jamais de relecteur par défaut. Le relecteur applique la méthode de revue que nomme la
 # couche projet (review.project-layer), dans une copie isolée hors du dépôt : un export du commit relu
 # (git archive), sans .git, donc sans le chemin du dépôt de travail. Son rapport doit citer un jeton de
 # lecture aléatoire ; tout fichier qu'il crée, modifie ou supprime dans la copie est signalé. Il est lancé
@@ -65,8 +66,7 @@ root=""
 config_project_root root || die "à lancer dans le dépôt."
 cd "$root"
 config_load "$root/workflow.config" || exit 2
-config_get reviewer_for_claude review.reviewer-for-claude
-config_get reviewer_for_gemini review.reviewer-for-gemini
+config_get reviewers review.reviewers
 config_get review_timeout review.timeout
 config_get review_report review.report
 config_get project_layer review.project-layer
@@ -80,19 +80,26 @@ config_get forge_base forge.base
 config_get guard_command guard.command
 config_get guard_patterns guard.patterns-file
 config_get forge_env_file forge.env-file
-readonly reviewer_for_claude reviewer_for_gemini review_timeout review_report project_layer private_paths \
+readonly reviewers review_timeout review_report project_layer private_paths \
   range_exclude convention stories_dir status_file epics_file forge_base guard_command guard_patterns forge_env_file
-
-case ${AUTHOR_LLM:-claude} in
-  claude) model=$reviewer_for_claude ;;
-  gemini) model=$reviewer_for_gemini ;;
-  *) die "AUTHOR_LLM doit valoir claude ou gemini : le relecteur vient toujours d'un autre fournisseur." ;;
-esac
 
 # Ce que l'outillage ne sait pas encore servir, ou que le projet a désactivé, sort ici en 2 — le code
 # d'une configuration qui ne permet pas l'action —, avant toute lecture de la forge. Les autres refus
 # du script gardent le code 1 du projet source.
 die_config() { printf '%s: %b\n' "$script_name" "$*" >&2; exit 2; }
+
+# Le relecteur : l'entrée du fournisseur de l'auteur dans review.reviewers. La table est validée au
+# chargement (un relecteur du même fournisseur que l'auteur y est refusé) ; un auteur sans entrée ne
+# retombe sur aucun relecteur par défaut — la revue ne peut pas conclure, et le dit.
+author=${AUTHOR_LLM:-claude}
+model="" covered=""
+for entry in $reviewers; do
+  covered+=" ${entry%%=*}"
+  [[ ${entry%%=*} != "$author" ]] || model=${entry#*=}
+done
+readonly author model covered
+[[ -n $model ]] \
+  || die_config "AUTHOR_LLM=$author : fournisseur d'auteur absent de la table review.reviewers (couverts :$covered) ; aucun relecteur n'est appelé. Nommer l'auteur par son fournisseur, ou ajouter son entrée « $author=<modèle d'un autre fournisseur> » (procedures/llm-review.md)."
 if [[ -n $pr && $review_report != pr-comment ]]; then
   die_config "review.report = $review_report : rapport de revue que l'outillage ne sait pas encore écrire (story 8)."
 fi

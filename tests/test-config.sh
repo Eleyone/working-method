@@ -151,11 +151,11 @@ case_config_none_desactive_et_se_lit() {
 
 case_config_types_invalides() {
   local change
-  for change in workflow.schema=3 forge.repo=sans-barre "forge.base=a..b" "forge.base=-dev" \
+  for change in workflow.schema=4 forge.repo=sans-barre "forge.base=a..b" "forge.base=-dev" \
     "forge.branch-prefixes=feat/ fix" "forge.env-file=/etc/env" "forge.env-file=../.env" \
     "forge.env-file=a/./b" "sprint.convention=libre" review.report=courriel review.timeout=15m \
     review.timeout=0 "review.exempt-paths=(" ci.bootstrap=yes bmad.version=6.12 \
-    "review.private-paths=.env  docs" "review.reviewer-for-claude=Gemini Pro" "ci.status-context= checks" \
+    "review.private-paths=.env  docs" "review.reviewers=claude=Gemini Pro" "ci.status-context= checks" \
     "bmad.project-name=a: b" "bmad.project-name=x\"y" "bmad.document-output-language=[fr]" \
     "bmad.project-name=a#b" "bmad.output-folder=../sortie" "bmad.modules=core bmm core" \
     "agents.skill-dirs=.claude/skills .agents/skills .claude/skills" "forge.branch-prefixes=feat fix feat"; do
@@ -286,17 +286,76 @@ case_config_racine_du_projet() {
   assert_eq 2 "$rc" "hors d'un dépôt git, la racine est introuvable"
 }
 
-case_config_schema_1_toujours_lu() {
-  # « Changer de schéma » (procedures/workflow-config.md) : le lecteur apprend les deux.
-  write_workflow_config "$work/projet" workflow.schema=1 -bmad.project-name -bmad.document-output-language -bmad.output-folder
+case_config_schemas_1_et_2_refuses_avec_la_nouvelle_forme() {
+  # « Changer de schéma » (procedures/workflow-config.md) : les schémas 1 et 2 portent les deux
+  # relecteurs nommés, que plus aucun outil ne lit ; les lire, ce serait les ignorer en silence.
+  write_workflow_config "$work/projet" workflow.schema=2 -review.reviewers \
+    review.reviewer-for-claude=gemini-3.1-pro-high review.reviewer-for-gemini=claude-opus-4-6-thinking
   load
-  assert_eq 0 "$rc" "un fichier au schéma 1, sans les champs du schéma 2, se lit (messages : $err)"
+  assert_eq 2 "$rc" "un fichier au schéma 2, complet pour ce schéma, est refusé"
+  assert_contains "workflow.schema : schéma 2 retiré : le schéma 3 est attendu" "$err" "le schéma attendu est nommé"
+  assert_contains "remplacés par la table review.reviewers" "$err" "et la nouvelle forme"
+  assert_contains "review.reviewer-for-claude : retiré au schéma 3 : la table review.reviewers le remplace" "$err" "chaque ancienne clé est nommée"
+  assert_contains "review.reviewer-for-gemini : retiré au schéma 3" "$err" "les deux"
+  run config_get valeur forge.repo
+  assert_eq 2 "$rc" "rien n'est lu d'un fichier refusé"
+  write_workflow_config "$work/projet" workflow.schema=1 -bmad.project-name -bmad.document-output-language \
+    -bmad.output-folder -review.reviewers review.reviewer-for-claude=gemini-3.1-pro-high \
+    review.reviewer-for-gemini=claude-opus-4-6-thinking
+  load
+  assert_eq 2 "$rc" "un fichier au schéma 1 est refusé"
+  assert_contains "schéma 1 retiré : le schéma 3 est attendu" "$err" "le schéma attendu est nommé"
+  assert_contains "bmad.output-folder s'ajoutent" "$err" "avec les champs à ajouter depuis le schéma 1"
+}
+
+case_config_anciennes_cles_refusees_au_schema_3() {
+  # présentes à côté de la table, elles seraient ignorées en silence : refusées, avec la nouvelle forme
+  local cle
+  for cle in review.reviewer-for-claude review.reviewer-for-gemini; do
+    write_workflow_config "$work/projet" "$cle=gemini-3.1-pro-high"
+    load
+    assert_eq 2 "$rc" "$cle refusée au schéma 3"
+    assert_contains "$cle : retiré au schéma 3 : la table review.reviewers le remplace" "$err" "le message nomme la nouvelle forme"
+    assert_contains "reviewers = claude=" "$err" "et en donne un exemple"
+  done
+}
+
+case_config_reviewers_table_ouverte() {
+  # un fournisseur s'ajoute par une entrée, jamais par du code
+  local valeur
+  for valeur in "claude=gemini-3.1-pro-high" \
+    "claude=gemini-3.1-pro-high gemini=claude-opus-4-6-thinking gpt=claude-opus-5-5-high" \
+    "mistral=gemini-3.1-pro-high claude=gpt-oss-120b-medium"; do
+    write_workflow_config "$work/projet" "review.reviewers=$valeur"
+    load
+    assert_eq 0 "$rc" "table admise : $valeur (messages : $err)"
+  done
   config_load "$work/projet/workflow.config"
-  run config_get valeur bmad.project-name
-  assert_eq 2 "$rc" "un champ du schéma 2 ne se lit pas dans un fichier au schéma 1"
-  assert_contains "schéma 2" "$err" "et le message le dit"
-  run config_get valeur bmad.version
-  assert_eq 0 "$rc" "un champ du schéma 1 se lit"
+  config_get valeur review.reviewers
+  assert_eq "mistral=gemini-3.1-pro-high claude=gpt-oss-120b-medium" "$valeur" "la table est rendue telle quelle"
+}
+
+case_config_reviewers_meme_fournisseur_refuse() {
+  local valeur
+  for valeur in "claude=claude-opus-5-5-high" "claude=gemini-3.1-pro-high gemini=gemini-3.8-flash-high" \
+    "gpt=gpt-oss-120b-medium"; do
+    write_workflow_config "$work/projet" "review.reviewers=$valeur"
+    load
+    assert_eq 2 "$rc" "relecteur du même fournisseur refusé : $valeur"
+    assert_contains "le relecteur est du même fournisseur que l'auteur" "$err" "la règle est nommée : $valeur"
+  done
+}
+
+case_config_reviewers_formes_invalides() {
+  local valeur
+  for valeur in "claude:gemini-3.1-pro-high" "claude=" "=gemini-3.1-pro-high" "Claude=gemini-3.1-pro-high" \
+    "claude=Gemini-3" "claude=gemini-3.1-pro-high  gemini=claude-opus-4-6-thinking" \
+    "claude=gemini-3.1-pro-high claude=gpt-oss-120b-medium" "claude=gemini=x" "2claude=gemini-x"; do
+    write_workflow_config "$work/projet" "review.reviewers=$valeur"
+    load
+    assert_eq 2 "$rc" "forme refusée : $valeur"
+    assert_contains "review.reviewers :" "$err" "le champ est nommé : $valeur"
+  done
 }
 
 case_config_champ_du_schema_2_dans_un_fichier_au_schema_1() {
@@ -306,12 +365,12 @@ case_config_champ_du_schema_2_dans_un_fichier_au_schema_1() {
   assert_contains "bmad.project-name : champ du schéma 2, inconnu du schéma 1" "$err" "le champ et les schémas sont nommés"
 }
 
-case_config_schema_2_exige_ses_champs() {
+case_config_schema_3_exige_ses_champs() {
   local champ
-  for champ in bmad.project-name bmad.document-output-language bmad.output-folder; do
+  for champ in bmad.project-name bmad.document-output-language bmad.output-folder review.reviewers; do
     write_workflow_config "$work/projet" "-$champ"
     load
-    assert_eq 2 "$rc" "$champ est requis au schéma 2"
+    assert_eq 2 "$rc" "$champ est requis au schéma 3"
     assert_contains "$champ : champ absent" "$err" "le champ est nommé"
   done
 }

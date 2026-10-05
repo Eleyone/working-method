@@ -37,17 +37,17 @@ avec le nom de chaque champ fautif et la raison, et l'outil sort en **code `2`**
 et l'outil qui la porte **le dit** dans sa sortie (« désactivé (… = none) ») — il ne la rend jamais
 verte en silence. Sur un champ non désactivable, `none` est une erreur de type.
 
-## Les champs — schéma 2
+## Les champs — schéma 3
 
-Le lecteur lit les schémas **1 et 2** (« Changer de schéma », ci-dessous). Le schéma 2 ajoute les
-trois champs `bmad.project-name`, `bmad.document-output-language` et `bmad.output-folder`, dont
-`bin/install` génère la configuration BMAD du projet (story 1) : au schéma 1, ils sont **inconnus**
-(code `2` s'ils sont écrits), et `bin/install` refuse en `2` en demandant le schéma 2. Les autres
-outils lisent indifféremment les deux.
+Le lecteur ne lit que le schéma **3** (« Changer de schéma », ci-dessous). Par rapport au schéma 2, il
+remplace les deux relecteurs nommés, `review.reviewer-for-claude` et `review.reviewer-for-gemini`, par
+la **table** `review.reviewers`, ouverte à tout fournisseur. Le schéma 2 avait ajouté au 1 les trois
+champs `bmad.project-name`, `bmad.document-output-language` et `bmad.output-folder`, dont `bin/install`
+génère la configuration BMAD du projet.
 
 | Champ | Type | Désactivable | Lu par |
 |---|---|---|---|
-| `workflow.schema` | `1` \| `2` | non | tous |
+| `workflow.schema` | `3` | non | tous |
 | `forge.repo` | `propriétaire/nom` | non | `gitea/gitea.sh` : dépôt distant vérifié, appels à l'API |
 | `forge.base` | branche (`git check-ref-format --branch`) | non | `create-pull-request`, `verify-and-merge-pr`, `llm-review` |
 | `forge.release-branch` | branche, différente de la base | **oui** | refus des PR vers elle (`create-pull-request`, `verify-and-merge-pr`) |
@@ -59,8 +59,7 @@ outils lisent indifféremment les deux.
 | `sprint.spec-source` | chemin | **oui** | `llm-review --story` |
 | `review.exempt-paths` | expression régulière étendue, appliquée à **chaque** chemin modifié | **oui** | `verify-and-merge-pr`, verrou de revue |
 | `review.report` | `pr-comment` \| `file` | non | `llm-review`, `verify-and-merge-pr` |
-| `review.reviewer-for-claude` | nom de modèle de `agy models` | non | `llm-review` |
-| `review.reviewer-for-gemini` | nom de modèle de `agy models` | non | `llm-review` |
+| `review.reviewers` *(schéma 3)* | table : entrées `auteur=modèle` séparées par une espace (ci-dessous) | non | `llm-review` : relecteur du fournisseur de l'auteur |
 | `review.timeout` | entier, en secondes | non | `llm-review` |
 | `review.project-layer` | chemin d'un fragment de consigne | non | `llm-review` |
 | `review.private-paths` | chemins séparés par une espace | non | `llm-review` : refusés dans la copie isolée |
@@ -75,15 +74,33 @@ outils lisent indifféremment les deux.
 | `tests.protected-outputs` | chemins séparés par une espace | **oui** | `tests/run.sh` |
 | `bmad.version` | `X.Y.Z` | non | `bin/install` : doit être la version que porte le sous-module (`bmad/bmad.config`), sinon code `1` |
 | `bmad.modules` | mots séparés par une espace | non | `bin/install` : modules activés, parmi l'union du sous-module (sinon `1`), `core` compris |
-| `bmad.project-name` *(schéma 2)* | libellé | non | `bin/install` : `project_name` de la configuration BMAD générée |
-| `bmad.document-output-language` *(schéma 2)* | libellé | non | `bin/install` : `document_output_language` |
-| `bmad.output-folder` *(schéma 2)* | chemin | non | `bin/install` : `output_folder`, et les dossiers d'artefacts qui en dérivent |
+| `bmad.project-name` | libellé | non | `bin/install` : `project_name` de la configuration BMAD générée |
+| `bmad.document-output-language` | libellé | non | `bin/install` : `document_output_language` |
+| `bmad.output-folder` | chemin | non | `bin/install` : `output_folder`, et les dossiers d'artefacts qui en dérivent |
 | `agents.skill-dirs` | chemins séparés par une espace | non | `bin/install` |
 
 Un **libellé** est recopié tel quel, sans citation, dans un fichier TOML et dans une valeur YAML
 générés : ni espace en tête ou en fin, ni caractère de contrôle, ni aucun de `"`, `\`, `'`,
 `` ` ``, `#`, `:`, `{`, `}`, `[`, `]`, `,`, `&`, `*`, `!`, `|`, `>`, `%`, `@`. Un **chemin** est relatif à la racine du projet, sans `/` initial, sans `.` ni `..`, sans blanc ni
 `/` final. Un **booléen** s'écrit `true` ou `false`, jamais `yes`, `on` ou `1`, que git accepterait.
+
+### La table des relecteurs — `review.reviewers`
+
+```ini
+[review]
+	reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-4-6-thinking gpt=claude-opus-4-6-thinking
+```
+
+- Une entrée par **fournisseur d'auteur**, `auteur=modèle`. L'auteur est nommé par son fournisseur,
+  en minuscules (`claude`, `gemini`, `gpt`…) : c'est la valeur d'`AUTHOR_LLM` (`llm-review.md`). Le
+  modèle est un nom de `agy models`.
+- Le **fournisseur d'un modèle** est le premier segment de son nom (`gemini-3.1-pro-high` → `gemini`,
+  `gpt-oss-120b-medium` → `gpt`).
+- ⛔ Une entrée dont le relecteur est **du même fournisseur** que l'auteur est refusée (code `2`) :
+  c'est la règle de la revue croisée, que la configuration ne peut pas contourner. Un auteur écrit
+  deux fois l'est aussi.
+- Un fournisseur s'ajoute par **une entrée**, jamais par du code. Un auteur **sans entrée** fait sortir
+  la revue en `2`, sans appeler aucun relecteur : il n'existe pas de relecteur par défaut.
 
 ### Règles entre champs
 
@@ -128,6 +145,21 @@ est sa propre racine et lit son propre `workflow.config`.
 
 ## Changer de schéma
 
-Un champ ajouté, retiré ou retypé change de schéma : `workflow.schema` passe à `2`, le lecteur
-apprend les deux, et chaque projet monte le sien dans sa PR de montée du sous-module. Un fichier d'un
-schéma que le lecteur ne connaît pas est refusé, jamais lu « au mieux ».
+Un champ ajouté, retiré ou retypé change de schéma : `workflow.schema` augmente, et chaque projet monte
+le sien dans sa PR de montée du sous-module. Un fichier d'un schéma que le lecteur ne connaît pas est
+refusé, jamais lu « au mieux ».
+
+En règle générale, le lecteur apprend l'ancien schéma et le nouveau : c'est ce qu'il a fait du 1 au 2.
+⛔ **Le schéma 3 fait exception** : les schémas 1 et 2 portent `review.reviewer-for-claude` et
+`review.reviewer-for-gemini`, que plus aucun outil ne lit. Les lire encore, ce serait accepter un
+fichier dont les relecteurs déclarés sont ignorés en silence. Un fichier au schéma 1 ou 2 est donc
+**refusé en `2`**, avec ce qu'il faut changer ; et l'une des deux anciennes clés, à quelque schéma que
+ce soit, est refusée avec la forme qui la remplace :
+
+| Schéma 2 | Schéma 3 |
+|---|---|
+| `schema = 2` | `schema = 3` |
+| `reviewer-for-claude = gemini-3.1-pro-high`<br>`reviewer-for-gemini = claude-opus-4-6-thinking` | `reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-4-6-thinking` (et toute autre entrée utile, `gpt=…` par exemple) |
+
+Depuis le schéma 1, ajouter aussi les trois champs `bmad.*`. La PR de montée du sous-module qui
+franchit le schéma 3 réécrit le fichier dans le même commit.

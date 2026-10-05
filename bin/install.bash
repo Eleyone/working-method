@@ -54,12 +54,11 @@ config_load "$project/workflow.config" || exit 2
 config_get skill_dirs agents.skill-dirs
 config_get bmad_version bmad.version
 config_get bmad_modules bmad.modules
-config_get schema workflow.schema
-readonly skill_dirs bmad_version bmad_modules schema
+readonly skill_dirs bmad_version bmad_modules
 
 # --- BMAD : tout ce qui peut refuser, avant la première écriture ---------------------------------
-[[ $schema == 2 ]] \
-  || die "workflow.config est au schéma $schema : la configuration BMAD demande le schéma 2 (bmad.project-name, bmad.document-output-language, bmad.output-folder ; procedures/workflow-config.md)."
+# Le schéma n'est plus vérifié ici : le lecteur ne lit que le schéma 3, qui porte les trois champs
+# bmad.* de la configuration générée ; un fichier au schéma 1 ou 2 est refusé par config_load (code 2).
 config_get bmad_project_name bmad.project-name
 config_get bmad_document_language bmad.document-output-language
 config_get bmad_output_folder bmad.output-folder
