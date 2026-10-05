@@ -320,4 +320,92 @@ case_sous_module_propre_apres_installation() {
   assert_eq "" "$(git -C "$work/depot/outils/commun" status --porcelain --ignored)" "le sous-module est propre"
 }
 
+# --- surcharges des modules : « [module "<nom>"] » de workflow.config ---------------------------
+
+surcharges_tea=(module.tea.test-framework=playwright module.tea.tea-pact-mcp=none
+  "module.tea.test-artifacts={project-root}/_bmad-output/test-artifacts"
+  "module.tea.test-design-output=_bmad-output/test-artifacts/test-design"
+  module.tea.tea-use-playwright-utils=false)
+
+case_surcharges_appliquees_au_yaml_et_au_toml() {
+  projet "${surcharges_tea[@]}"
+  installe
+  assert_eq 0 "$rc" "installation avec surcharges (messages : $err)"
+  local yaml toml
+  yaml=$(cat "$work/depot/_bmad/tea/config.yaml")
+  toml=$(cat "$work/depot/_bmad/config.toml")
+  assert_contains $'\ntest_framework: "playwright"\n' "$yaml" "valeur surchargée, citée"
+  assert_contains $'\ntea_pact_mcp: "none"\n' "$yaml" "une chaîne « none » reste une valeur"
+  assert_contains $'\ntest_artifacts: "{project-root}/_bmad-output/test-artifacts"\n' "$yaml" "chemin surchargé"
+  assert_contains $'\ntest_design_output: "_bmad-output/test-artifacts/test-design"\n' "$yaml" "chemin non cité au modèle, cité ici"
+  assert_contains $'\ntea_use_playwright_utils: false\n' "$yaml" "un booléen reste nu"
+  assert_contains 'test_framework = "playwright"' "$toml" "config.toml suit"
+  assert_contains 'tea_pact_mcp = "none"' "$toml" "config.toml suit"
+  assert_contains 'tea_use_playwright_utils = false' "$toml" "booléen nu dans config.toml"
+  # les valeurs non surchargées gardent celles du modèle
+  assert_contains $'\nrisk_threshold: p1\n' "$yaml" "valeur du modèle intacte"
+  assert_contains $'\ntest_review_output: skills/test-artifacts/test-reviews\n' "$yaml" "valeur du modèle intacte, même voisine d'une surcharge"
+  assert_contains 'risk_threshold = "p1"' "$toml" "valeur du modèle intacte dans config.toml"
+  local modele
+  modele=$(grep -c . "$work/commun/bmad/method/templates/tea.config.yaml")
+  assert_eq "$modele" "$(grep -c . "$work/depot/_bmad/tea/config.yaml" | awk '{print $1 - 2}')" "aucune ligne ajoutée ni perdue (en-tête de deux lignes excepté)"
+}
+
+case_surcharges_relance_ne_change_rien() {
+  projet "${surcharges_tea[@]}"
+  installe
+  local avant
+  avant=$(etat)
+  sleep 1
+  installe
+  assert_eq 0 "$rc" "seconde installation (messages : $err)"
+  assert_eq "$avant" "$(etat)" "la seconde installation ne change rien, dates comprises"
+  [[ $err != *ATTENTION* ]] || { echo "une surcharge n'est pas une édition à la main : $err" >&2; exit 1; }
+}
+
+case_surcharge_sans_cle_au_rendu_rend_2() {
+  # le modèle de config.toml et celui du config.yaml ne concordent plus : rien n'est écrit
+  projet "${surcharges_tea[@]}"
+  sed -i '/^test_framework = /d' "$work/depot/outils/commun/bmad/method/templates/config.toml"
+  installe
+  assert_eq 2 "$rc" "une clé surchargée absente de [modules.tea] arrête l'installation"
+  assert_contains "clé « test_framework » trouvée 0 fois dans [modules.tea]" "$err" "la clé et le bloc sont nommés"
+  rien_d_ecrit "clé absente du toml"
+}
+
+case_surcharge_cle_en_double_au_rendu_rend_2() {
+  projet "${surcharges_tea[@]}"
+  printf 'test_framework: auto\n' >> "$work/depot/outils/commun/bmad/method/templates/tea.config.yaml"
+  installe
+  assert_eq 2 "$rc" "une clé surchargée en double dans le modèle arrête l'installation"
+  assert_contains "clé « test_framework » trouvée 2 fois" "$err" "le compte est dit"
+  rien_d_ecrit "clé en double"
+}
+
+case_surcharge_ecriture_impossible_rend_2() {
+  # l'écriture passe par « <fichier>.surcharge » : un dossier à ce nom la fait échouer, même en root
+  write_workflow_config "$work/projet" "bmad.modules=core bmm tea" module.tea.test-framework=playwright
+  printf 'test_framework: auto\n' > "$work/rendu.yaml"
+  printf '[modules.tea]\ntest_framework = "auto"\n' > "$work/rendu.toml"
+  local fichier
+  for fichier in rendu.yaml rendu.toml; do
+    rm -rf "$work"/rendu.*.surcharge
+    mkdir "$work/$fichier.surcharge"
+    # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
+    run bash -c '. "$1/lib/bmad.sh" && config_load "$2" && bmad_apply_overrides "$3/rendu.yaml" "$3/rendu.toml" tea' \
+      _ "$common" "$work/projet/workflow.config" "$work"
+    assert_eq 2 "$rc" "écriture impossible de $fichier : 2"
+    assert_contains "$work/$fichier : écriture impossible" "$err" "le fichier est nommé"
+  done
+  assert_eq 'test_framework = "auto"' "$(sed -n 2p "$work/rendu.toml")" "un échec laisse le fichier rendu tel qu'il était"
+}
+
+case_surcharge_invalide_refusee_sans_rien_ecrire() {
+  projet module.tea.inconnue=x
+  installe
+  assert_eq 2 "$rc" "une surcharge inconnue est refusée par la lecture de workflow.config"
+  assert_contains "module.tea.inconnue : clé inconnue du modèle de tea" "$err" "la clé est nommée"
+  rien_d_ecrit "surcharge inconnue"
+}
+
 run_case "$@"

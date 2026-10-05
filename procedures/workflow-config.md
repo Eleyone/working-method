@@ -78,6 +78,7 @@ génère la configuration BMAD du projet.
 | `bmad.document-output-language` | libellé | non | `bin/install` : `document_output_language` |
 | `bmad.output-folder` | chemin | non | `bin/install` : `output_folder`, et les dossiers d'artefacts qui en dérivent |
 | `agents.skill-dirs` | chemins séparés par une espace | non | `bin/install` |
+| `module.<nom>.<clé>` *(optionnel)* | valeur du modèle du module (ci-dessous) | — | `bin/install` : surcharge de la configuration générée du module |
 
 Un **libellé** est recopié tel quel, sans citation, dans un fichier TOML et dans une valeur YAML
 générés : ni espace en tête ou en fin, ni caractère de contrôle, ni aucun de `"`, `\`, `'`,
@@ -101,6 +102,39 @@ générés : ni espace en tête ou en fin, ni caractère de contrôle, ni aucun 
   deux fois l'est aussi.
 - Un fournisseur s'ajoute par **une entrée**, jamais par du code. Un auteur **sans entrée** fait sortir
   la revue en `2`, sans appeler aucun relecteur : il n'existe pas de relecteur par défaut.
+
+### Surcharges des modules BMAD — `[module "<nom>"]` (optionnelles)
+
+`bin/install` génère la configuration de chaque module activé depuis le **modèle** que porte le
+sous-module (`bmad/method/templates/<nom>.config.yaml`). Les valeurs propres au module (chemins
+d'artefacts de `tea`, son cadre de test…) y sont écrites telles que l'installeur BMAD les produit. Un
+projet qui en veut d'autres les **surcharge** :
+
+```ini
+[module "tea"]
+	test-artifacts = {project-root}/_bmad-output/test-artifacts
+	test-framework = playwright
+	tea-pact-mcp = none
+```
+
+- **Optionnelles** : sans surcharge, la valeur est celle du modèle — une valeur écrite et versionnée
+  dans le dépôt commun, pas un défaut du lecteur. Un `workflow.config` sans section `[module …]`
+  reste valide au **même schéma** : aucune migration pour les projets qui n'en ont pas besoin.
+- La clé s'écrit avec des tirets (git config refuse « `_` ») : `test-framework` désigne
+  `test_framework`. Elle s'applique au `config.yaml` du module **et** au bloc `[modules.<nom>]` de
+  `_bmad/config.toml`.
+- ⛔ Refusé en `2` : un module absent de `bmad.modules`, ou sans modèle dans le dépôt commun ; une clé
+  absente du modèle (le message liste les clés admises) ; une clé dont la valeur dérive déjà d'un
+  champ (`planning_artifacts` ← `bmad.output-folder`, `user_name` ← `config.user.toml`…) ; une
+  surcharge écrite deux fois ; une valeur vide, avec un blanc en tête ou en fin, un caractère de
+  contrôle, ou l'un de `"`, `\`, `` ` ``, `@`. Une clé dont le modèle vaut `true` ou `false`
+  n'admet que `true` ou `false`.
+- Rendu : un booléen reste nu, toute autre valeur est écrite entre guillemets doubles (chaîne en YAML
+  comme en TOML).
+- **Générique, pas propre à `tea`** : tout module activé dont le modèle porte une valeur littérale se
+  surcharge ainsi (`bmm` : `project-knowledge` ; `cis` : `visual-tools` ; `bmb` : ses deux dossiers).
+  `core` n'en a aucune — toutes ses valeurs dérivent d'un champ. Le même code sert tous les modules :
+  le restreindre à `tea` aurait coûté une liste à tenir, pas une ligne de moins.
 
 ### Règles entre champs
 

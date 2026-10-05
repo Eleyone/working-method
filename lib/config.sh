@@ -227,7 +227,7 @@ config_check_path() {
 }
 
 config_load() { # $1 = fichier
-  local file=$1 raw entry key value type count problems=() field
+  local file=$1 raw entry key value type count problems=() field reason
   local -A seen=() values=()
   config_values=()
   config_loaded=""
@@ -270,6 +270,16 @@ config_load() { # $1 = fichier
       problems+=("$key : ${config_removed[$key]}.")
       continue
     fi
+    if [[ $key == module.* ]]; then
+      # surcharge optionnelle d'une valeur de module BMAD (config_check_module_override)
+      count=${seen[$key]}
+      if ((count != 1)); then
+        problems+=("$key : écrit $count fois ; une seule valeur est admise.")
+      elif ! reason=$(config_check_module_override "$key" "${values[$key]-}" "${values[bmad.modules]-}"); then
+        problems+=("$key : $reason.")
+      fi
+      continue
+    fi
     if [[ -z ${config_schema[$key]+x} ]]; then
       problems+=("$key : champ inconnu du schéma $level (section ou clé hors schéma, sous-section ou include compris).")
       continue
@@ -298,7 +308,6 @@ config_load() { # $1 = fichier
       [[ $type == \?* ]] || problems+=("$key : « none » refusé, ce champ n'est pas désactivable.")
       continue
     fi
-    local reason
     reason=$(config_check_type "$value" "${type#\?}") || problems+=("$key : $reason.")
   done
   # Règles entre champs : un champ qui n'a de sens qu'avec un autre ne se désactive pas seul.
@@ -325,6 +334,74 @@ config_load() { # $1 = fichier
   done
   config_loaded=$file
   return 0
+}
+
+# Surcharges des modules BMAD : « [module "<nom>"] <clé> = <valeur> », lue « module.<nom>.<clé> ».
+# Optionnelles : sans surcharge, la valeur est celle du modèle de configuration du module, que porte le
+# sous-module (bmad/method/templates/<nom>.config.yaml) — une valeur écrite et versionnée, pas un
+# défaut du lecteur. La clé s'écrit avec des tirets (git config refuse « _ ») et désigne la clé du
+# modèle écrite avec des « _ ». Seule une valeur LITTÉRALE du modèle se surcharge : une valeur dérivée
+# d'un champ (« @bmad.…@ », « @user:…@ ») a déjà son champ. Une valeur « true » ou « false » du modèle
+# n'admet que « true » ou « false ». Procédure : procedures/workflow-config.md
+config_module_template() { # $1 = module ; affiche le chemin de son modèle de config.yaml
+  printf '%s/bmad/method/templates/%s.config.yaml\n' "$config_common_root" "$1"
+}
+
+# $1 = clé « module.<nom>.<clé> », $2 = valeur, $3 = bmad.modules ; 0 valide, 1 sinon (raison écrite)
+config_check_module_override() {
+  local key=$1 value=$2 modules=$3 module name template line found="" literal="" keys=""
+  [[ $key =~ ^module\.([a-z0-9-]+)\.([a-z0-9-]+)$ ]] \
+    || { echo "forme « [module \"<nom>\"] <clé> = <valeur> » attendue (nom et clé : minuscules, chiffres, tirets)"; return 1; }
+  module=${BASH_REMATCH[1]}
+  name=${BASH_REMATCH[2]//-/_}
+  template=$(config_module_template "$module")
+  [[ -f $template ]] || { echo "module « $module » sans modèle de configuration dans le dépôt commun"; return 1; }
+  [[ " $modules " == *" $module "* ]] \
+    || { echo "module « $module » absent de bmad.modules : sa configuration n'est pas générée"; return 1; }
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line =~ ^([a-z0-9_]+):\ (.*)$ ]] || continue
+    if [[ ${BASH_REMATCH[2]} == *@* ]]; then
+      [[ ${BASH_REMATCH[1]} != "$name" ]] || found=derived
+      continue
+    fi
+    keys+=" ${BASH_REMATCH[1]//_/-}"
+    if [[ ${BASH_REMATCH[1]} == "$name" ]]; then
+      found=literal
+      literal=${BASH_REMATCH[2]}
+    fi
+  done < "$template"
+  case $found in
+    literal) ;;
+    derived)
+      echo "valeur dérivée d'un champ de workflow.config ou de _bmad/config.user.toml : elle ne se surcharge pas ici"
+      return 1
+      ;;
+    *) echo "clé inconnue du modèle de $module (clés surchargeables :${keys:- aucune})"; return 1 ;;
+  esac
+  [[ -n $value ]] || { echo "valeur vide"; return 1; }
+  if [[ $literal == true || $literal == false ]]; then
+    [[ $value == true || $value == false ]] \
+      || { echo "« true » ou « false » attendu (valeur du modèle : $literal)"; return 1; }
+    return 0
+  fi
+  [[ ! $value =~ [[:cntrl:]] ]] || { echo "caractère de contrôle refusé"; return 1; }
+  [[ $value =~ ^[^[:space:]](.*[^[:space:]])?$ ]] || { echo "valeur sans espace en tête ni en fin attendue"; return 1; }
+  case $value in
+    *[\"\\\`@]*) echo "caractère refusé dans une surcharge (aucun de \" \\ \` @)"; return 1 ;;
+  esac
+  return 0
+}
+
+# Les surcharges d'un module, une fois le fichier chargé : une ligne « <clé du modèle><TAB><valeur> »
+# par surcharge, triées. Rien si le module n'en a pas.
+config_module_overrides() { # $1 = module
+  local key name
+  [[ -n $config_loaded ]] || { printf 'config_module_overrides : aucun workflow.config chargé.\n' >&2; return 2; }
+  for key in "${!config_values[@]}"; do
+    [[ $key == "module.$1."* ]] || continue
+    name=${key#"module.$1."}
+    printf '%s\t%s\n' "${name//-/_}" "${config_values[$key]}"
+  done | LC_ALL=C sort
 }
 
 # Le premier champ commande les suivants : « none » sur l'un exige « none » sur tous, et une valeur

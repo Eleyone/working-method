@@ -382,4 +382,104 @@ case_config_doublon_nomme() {
   assert_contains "bmad.modules : « core » écrit deux fois dans la liste" "$err" "le champ et le mot fautif sont nommés"
 }
 
+# --- surcharges des modules BMAD : « [module "<nom>"] <clé> = <valeur> », optionnelles ------------
+
+case_config_surcharges_de_module_admises() {
+  write_workflow_config "$work/projet" "bmad.modules=core bmm tea" module.tea.test-framework=playwright \
+    module.tea.tea-pact-mcp=none "module.tea.test-artifacts={project-root}/_bmad-output/test-artifacts" \
+    module.tea.tea-use-playwright-utils=false module.bmm.project-knowledge=documentation
+  load
+  assert_eq 0 "$rc" "des surcharges de clés littérales des modèles sont admises (messages : $err)"
+  config_load "$work/projet/workflow.config"
+  run config_module_overrides tea
+  assert_eq $'tea_pact_mcp\tnone\ntea_use_playwright_utils\tfalse\ntest_artifacts\t{project-root}/_bmad-output/test-artifacts\ntest_framework\tplaywright' \
+    "$out" "chaque surcharge est rendue sous le nom de clé du modèle"
+  run config_module_overrides cis
+  assert_eq "" "$out" "un module sans surcharge n'en rend aucune"
+}
+
+case_config_surcharges_absentes_ne_changent_rien() {
+  # optionnelles : un fichier sans elles reste valide, au même schéma
+  write_workflow_config "$work/projet" "bmad.modules=core bmm tea"
+  load
+  assert_eq 0 "$rc" "sans surcharge, le fichier est valide (messages : $err)"
+  config_load "$work/projet/workflow.config"
+  run config_module_overrides tea
+  assert_eq "" "$out" "aucune surcharge"
+}
+
+case_config_surcharge_cle_inconnue_refusee() {
+  write_workflow_config "$work/projet" "bmad.modules=core bmm tea" module.tea.inconnue=x
+  load
+  assert_eq 2 "$rc" "une clé absente du modèle est refusée"
+  assert_contains "module.tea.inconnue : clé inconnue du modèle de tea (clés surchargeables :" "$err" "le message nomme le module"
+  assert_contains "test-framework" "$err" "et liste les clés admises"
+}
+
+case_config_surcharge_refusee_hors_des_cas_admis() {
+  local change
+  for change in module.tea.test-framework=playwright "module.wds.x=y" module.bmm.planning-artifacts=ailleurs \
+    module.core.user-name=Autre module.tea.tea-use-playwright-utils=yes "module.tea.test-framework=a\"b" \
+    module.tea.test-framework=a@b "module.tea.test-framework= espace" module.tea.test-framework=; do
+    write_workflow_config "$work/projet" "$change"
+    [[ $change == module.tea.test-framework=playwright || $change == module.wds.x=y ]] \
+      || git config -f "$work/projet/workflow.config" bmad.modules "core bmm tea"
+    load
+    assert_eq 2 "$rc" "surcharge refusée : $change"
+    assert_contains "${change%%=*} :" "$err" "la clé est nommée : $change"
+  done
+  write_workflow_config "$work/projet" module.tea.test-framework=playwright
+  load
+  assert_contains "module « tea » absent de bmad.modules" "$err" "module non activé : la raison est dite"
+  write_workflow_config "$work/projet" module.bmm.planning-artifacts=ailleurs
+  load
+  assert_contains "valeur dérivée d'un champ" "$err" "valeur dérivée : la raison est dite"
+}
+
+case_config_surcharge_module_sans_modele_refusee() {
+  # un module déclaré mais sans modèle dans le dépôt commun : la raison est dite, pas « clé inconnue »
+  write_workflow_config "$work/projet" "bmad.modules=core bmm wds" module.wds.x=y
+  load
+  assert_eq 2 "$rc" "surcharge d'un module sans modèle refusée"
+  assert_contains "module.wds.x : module « wds » sans modèle de configuration dans le dépôt commun" "$err" "la raison est dite"
+}
+
+case_config_surcharge_valeurs_mal_formees_refusees() {
+  # chaque garde de la valeur, sur l'entrée qu'elle doit refuser (constat de la revue 1 de la PR n° 8)
+  local valeur
+  for valeur in $'a\tb' $'a\x01b' "fin " " tete" 'a\b' 'a`b' 'a"b' 'a@b'; do
+    write_workflow_config "$work/projet" "bmad.modules=core bmm tea" "module.tea.test-framework=$valeur"
+    load
+    assert_eq 2 "$rc" "valeur refusée : $(printf %q "$valeur")"
+    assert_contains "module.tea.test-framework :" "$err" "la clé est nommée : $(printf %q "$valeur")"
+  done
+}
+
+case_config_surcharge_nom_de_module_a_souligne_refuse() {
+  # git config refuse « _ » dans un nom de clé, mais l'accepte dans un nom de sous-section
+  raw_config $'[module "te_a"]\n\ttest-framework = playwright'
+  load
+  assert_eq 2 "$rc" "un nom de module à souligné est refusé"
+  assert_contains "module.te_a.test-framework : forme « [module" "$err" "la forme attendue est donnée"
+}
+
+case_config_surcharges_avant_chargement_refusees() {
+  run config_module_overrides tea
+  assert_eq 2 "$rc" "rien n'est lu avant un chargement réussi"
+  assert_contains "aucun workflow.config chargé" "$err" "et le message le dit"
+}
+
+case_config_surcharge_forme_et_doublon_refuses() {
+  raw_config $'[module "tea.x"]\n\ttest-framework = playwright'
+  git config -f "$work/projet/workflow.config" bmad.modules "core bmm tea"
+  load
+  assert_eq 2 "$rc" "un nom de module à point est refusé"
+  assert_contains "forme « [module" "$err" "la forme attendue est donnée"
+  raw_config $'[module "tea"]\n\ttest-framework = playwright\n[module "tea"]\n\ttest-framework = auto'
+  git config -f "$work/projet/workflow.config" bmad.modules "core bmm tea"
+  load
+  assert_eq 2 "$rc" "une surcharge écrite deux fois est refusée"
+  assert_contains "module.tea.test-framework : écrit 2 fois" "$err" "le doublon est nommé"
+}
+
 run_case "$@"

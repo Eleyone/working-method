@@ -96,6 +96,14 @@
 	document-output-language = Français
 	output-folder = _bmad-output
 
+# Surcharges, OPTIONNELLES, des valeurs d'un module activé (procedures/workflow-config.md,
+# « Surcharges des modules BMAD ») : sans elles, la configuration générée garde les valeurs du modèle
+# du sous-module. Clés avec des tirets ; une clé inconnue du modèle est refusée (code 2). Exemple pour
+# tea, s'il était activé dans bmad.modules :
+# [module "tea"]
+# 	test-artifacts = {project-root}/_bmad-output/test-artifacts
+# 	test-framework = playwright
+
 [agents]
 	# dossiers où bin/install relie les skills du dépôt commun
 	skill-dirs = .claude/skills .agents/skills

@@ -10,7 +10,7 @@ dans un projet, il écrirait à travers les liens, donc dans le sous-module.
 |---|---|---|---|
 | Méthode | skills BMAD, catalogue d'aide de chaque module, scripts de `_bmad/scripts` | `bmad/method/` du dépôt commun, relié dans le projet | `bmad/update.sh` |
 | Configuration du projet | `_bmad/config.toml` (versionné), `_bmad/_config/bmad-help.csv` (versionné) | projet | `bin/install`, depuis `workflow.config` |
-| Configuration par module | `_bmad/<module>/config.yaml` (**non versionné**) | projet | `bin/install`, depuis `workflow.config` **et** `_bmad/config.user.toml` |
+| Configuration par module | `_bmad/<module>/config.yaml` (**non versionné**) | projet | `bin/install`, depuis `workflow.config` (champs `bmad.*` et surcharges `[module "<nom>"]`) **et** `_bmad/config.user.toml` |
 | Couche utilisatrice | `_bmad/config.user.toml` (`user_name`, `communication_language`, `user_skill_level`) | projet | l'utilisatrice — jamais `bin/install` |
 | Personnalisations | `_bmad/custom/` | projet | l'équipe — jamais l'installeur ni `bin/install` |
 | Artefacts | `_bmad-output/` (ou `bmad.output-folder`) | projet | les skills |

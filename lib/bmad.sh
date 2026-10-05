@@ -17,6 +17,9 @@
 #   bmad_config_toml <modèle> <sortie> <modules>
 #                                      ne garde, du modèle de config.toml, que les blocs des modules donnés
 #                                      (marqueurs « #@module <m> » posés par bmad/update.sh) : 0 ; 2 sinon.
+#   bmad_apply_overrides <yaml> <toml> <module>
+#                                      applique au config.yaml et au config.toml rendus les surcharges
+#                                      du module déclarées dans workflow.config : 0 ; 2 sinon.
 #   bmad_skill_manifest_load <fichier> lit skill-manifest.csv (table skill → module de l'installeur) :
 #                                      0 ; 2 si une ligne n'est pas lue. Remplit bmad_skill_module[skill].
 #   bmad_help_catalog <catalogue> <dossier des modules> <sortie> <modules>
@@ -219,6 +222,50 @@ bmad_config_toml() { # $1 = modèle, $2 = sortie, $3 = modules à garder
     [[ -z $keep ]] || printf '%s\n' "$line" >> "$output" || return 2
   done < "$template"
   [[ -n $seen_marker ]] || { printf '%s : aucun marqueur « #@module » : modèle incohérent.\n' "$template" >&2; return 2; }
+}
+
+# Applique les surcharges du module (« [module "<nom>"] » de workflow.config, déjà validées par
+# config_load) à son config.yaml rendu et au bloc [modules.<nom>] du config.toml rendu. Une valeur
+# booléenne du modèle reste nue ; toute autre est écrite entre guillemets doubles, forme que YAML et
+# TOML lisent toutes deux comme une chaîne (les guillemets, antislashs et « @ » sont refusés en amont).
+# Chaque clé surchargée doit se trouver exactement une fois dans chacun des deux fichiers : sinon le
+# modèle et la validation ne concordent plus, et rien n'est écrit (2). L'écriture passe par
+# « <fichier>.surcharge » puis mv : un échec laisse le fichier rendu tel qu'il était.
+bmad_apply_overrides() { # $1 = config.yaml rendu, $2 = config.toml rendu, $3 = module
+  local yaml=$1 toml=$2 module=$3 name value overrides line out hits section current rendered
+  overrides=$(config_module_overrides "$module") || return 2
+  [[ -n $overrides ]] || return 0
+  while IFS=$'\t' read -r name value; do
+    # config.yaml : « <clé>: <valeur> » en début de ligne
+    out="" hits=0 rendered=""
+    while IFS= read -r line || [[ -n $line ]]; do
+      if [[ $line =~ ^${name}:\ (.*)$ ]]; then
+        current=${BASH_REMATCH[1]}
+        hits=$((hits + 1))
+        if [[ $current == true || $current == false ]]; then rendered=$value; else rendered="\"$value\""; fi
+        line="$name: $rendered"
+      fi
+      out+=$line$'\n'
+    done < "$yaml"
+    ((hits == 1)) || { printf '%s : clé « %s » trouvée %s fois dans la configuration de %s ; une attendue.\n' "$yaml" "$name" "$hits" "$module" >&2; return 2; }
+    { printf '%s' "$out" > "$yaml.surcharge" && mv -f "$yaml.surcharge" "$yaml"; } \
+      || { printf '%s : écriture impossible.\n' "$yaml" >&2; return 2; }
+    # config.toml : « <clé> = <valeur> » dans le bloc [modules.<module>]
+    out="" hits=0 section=""
+    while IFS= read -r line || [[ -n $line ]]; do
+      if [[ $line =~ ^\[(.*)\]$ ]]; then
+        section=${BASH_REMATCH[1]}
+      elif [[ $section == "modules.$module" && $line =~ ^${name}\ =\ (.*)$ ]]; then
+        hits=$((hits + 1))
+        line="$name = $rendered"
+      fi
+      out+=$line$'\n'
+    done < "$toml"
+    ((hits == 1)) || { printf '%s : clé « %s » trouvée %s fois dans [modules.%s] ; une attendue.\n' "$toml" "$name" "$hits" "$module" >&2; return 2; }
+    { printf '%s' "$out" > "$toml.surcharge" && mv -f "$toml.surcharge" "$toml"; } \
+      || { printf '%s : écriture impossible.\n' "$toml" >&2; return 2; }
+  done <<< "$overrides"
+  return 0
 }
 
 # Le catalogue est celui que l'installeur a assemblé pour l'union, déjà trié par module puis par

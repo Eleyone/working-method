@@ -122,6 +122,12 @@ generated=()   # chemins relatifs au projet ; leur contenu est sous $staging/<ch
 mkdir -p "$staging/_bmad/_config"
 bmad_config_toml "$method/templates/config.toml" "$staging/config.toml.modele" "$bmad_modules" || exit 2
 bmad_render "$staging/config.toml.modele" "$staging/config.toml.rendu" || exit 2
+# Chaque config.yaml est rendu ici, avant que config.toml ne soit écrit : les surcharges d'un module
+# (« [module "<nom>"] » de workflow.config) portent sur les deux fichiers à la fois.
+for module in $bmad_modules; do
+  bmad_render "$method/templates/$module.config.yaml" "$staging/$module.rendu" || exit 2
+  bmad_apply_overrides "$staging/$module.rendu" "$staging/config.toml.rendu" "$module" || exit 2
+done
 # Chaque écriture a sa garde : un bloc « { …; } > f || die » suspendrait set -e à l'intérieur, et une
 # écriture en échec suivie d'une écriture réussie passerait en silence.
 toml="$staging/_bmad/config.toml"
@@ -133,7 +139,6 @@ cat "$staging/config.toml.rendu" >> "$toml" || die "génération de _bmad/config
 generated+=(_bmad/config.toml)
 for module in $bmad_modules; do
   mkdir -p "$staging/_bmad/$module"
-  bmad_render "$method/templates/$module.config.yaml" "$staging/$module.rendu" || exit 2
   yaml="$staging/_bmad/$module/config.yaml"
   printf '%s depuis workflow.config et %s — ne pas éditer.\n# Non versionné. Une édition à la main est écrasée au prochain bin/install, et signalée.\n' \
     "$generated_mark" "$user_file" > "$yaml" || die "génération de _bmad/$module/config.yaml impossible."
