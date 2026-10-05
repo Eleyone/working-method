@@ -8,7 +8,7 @@
 # Le dépôt commun jetable : bin/, lib/ et skills/ suffisent à l'installation.
 commun_jetable() {
   mkdir -p "$work/commun"
-  cp -R "$common/bin" "$common/lib" "$common/skills" "$work/commun/"
+  cp -R "$common/bin" "$common/lib" "$common/skills" "$common/bmad" "$work/commun/"
   git -C "$work/commun" init -q
   git -C "$work/commun" add -A
   git -C "$work/commun" -c user.name=essai -c user.email=essai@example.invalid -c core.hooksPath=/dev/null \
@@ -21,6 +21,16 @@ projet() { # $1… = changements du workflow.config
   new_repo
   git -C "$work/depot" -c protocol.file.allow=always submodule add -q "$work/commun" outils/commun 2>/dev/null
   write_workflow_config "$work/depot" "agents.skill-dirs=.claude/skills .agents/skills" "$@"
+  config_utilisatrice
+}
+
+# La couche utilisatrice de BMAD, que bin/install exige (story 1) ; ignorée par git, comme le config.yaml
+# qu'il en génère.
+config_utilisatrice() {
+  mkdir -p "$work/depot/_bmad"
+  printf '[core]\nuser_name = "Essai"\ncommunication_language = "Français"\n[modules.bmm]\nuser_skill_level = "expert"\n' \
+    > "$work/depot/_bmad/config.user.toml"
+  printf '/_bmad/*/config.yaml\n/_bmad/config.user.toml\n' > "$work/depot/.gitignore"
 }
 
 installe() { run bash -c 'cd "$1" && sh outils/commun/bin/install' _ "$work/depot"; }
@@ -45,7 +55,7 @@ case_install_pose_les_liens() {
   done
   [[ -x $work/depot/.working-method/gates/verify-and-merge-pr.sh || -f $work/depot/.working-method/bin/install ]] \
     || { echo "l'outillage ne se lit pas à travers .working-method" >&2; exit 1; }
-  assert_contains "réservée à la story 1, rien n’est installé" "$out" "la place de BMAD est dite, rien n'est installé"
+  assert_contains "BMAD 6.12.0" "$out" "BMAD est installé depuis le sous-module (tests/test-install-bmad.sh)"
 }
 
 case_install_relancee_ne_change_rien() {
@@ -56,7 +66,7 @@ case_install_relancee_ne_change_rien() {
   installe
   assert_eq 0 "$rc" "seconde installation (messages : $err)"
   assert_eq "$avant" "$(etat)" "la seconde installation ne change rien"
-  assert_contains "0 lien(s) posé(s), 9 déjà en place" "$out" "et elle le dit"
+  assert_contains "0 lien(s) posé(s)" "$out" "et elle le dit"
 }
 
 case_install_refuse_d_ecraser() {
@@ -87,6 +97,7 @@ case_install_sous_module_au_point_d_entree() {
   new_repo
   git -C "$work/depot" -c protocol.file.allow=always submodule add -q "$work/commun" .working-method 2>/dev/null
   write_workflow_config "$work/depot" "agents.skill-dirs=.claude/skills"
+  config_utilisatrice
   run bash -c 'cd "$1" && sh .working-method/bin/install' _ "$work/depot"
   assert_eq 0 "$rc" "installation (messages : $err)"
   assert_eq ../../.working-method/skills/llm-review "$(readlink "$work/depot/.claude/skills/llm-review")" "lien relatif d'un skill"

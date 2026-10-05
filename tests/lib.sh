@@ -79,7 +79,7 @@ write_workflow_config() { # $1 = dossier, $2… = changements
   mkdir -p "$dir"
   : > "$file"
   local -a base=(
-    workflow.schema=1
+    workflow.schema=2
     forge.repo=Proprietaire/projet-essai
     forge.base=dev
     forge.release-branch=main
@@ -107,6 +107,9 @@ write_workflow_config() { # $1 = dossier, $2… = changements
     "tests.protected-outputs=public build"
     bmad.version=6.12.0
     "bmad.modules=core bmm"
+    bmad.project-name=projet-essai
+    bmad.document-output-language=Français
+    bmad.output-folder=_bmad-output
     "agents.skill-dirs=.claude/skills .agents/skills"
   )
   for change in "${base[@]}" "$@"; do

@@ -18,8 +18,8 @@
 # Description de chaque champ : procedures/workflow-config.md du dépôt commun.
 
 [workflow]
-	# version du schéma : 1
-	schema = 1
+	# version du schéma : 2 (le 1 se lit encore, mais bin/install ne génère la configuration BMAD qu'au 2)
+	schema = 2
 
 [forge]
 	# dépôt sur la forge, « propriétaire/nom » ; le dépôt distant origin doit être celui-là
@@ -86,10 +86,14 @@
 	protected-outputs = none
 
 [bmad]
-	# version de BMAD déclarée par le projet (story 1)
+	# version de BMAD déclarée par le projet : celle du sous-module (bmad/bmad.config), sinon bin/install rend 1
 	version = 6.12.0
-	# modules activés, parmi ceux du dépôt commun (story 1)
+	# modules activés, parmi l'union du sous-module (core bmm bmb cis bmad-loop tea) ; core est requis
 	modules = core bmm
+	# schéma 2 : valeurs de la configuration BMAD que bin/install génère (procedures/bmad.md)
+	project-name = projet-exemple
+	document-output-language = Français
+	output-folder = _bmad-output
 
 [agents]
 	# dossiers où bin/install relie les skills du dépôt commun

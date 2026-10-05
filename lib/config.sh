@@ -37,6 +37,8 @@
 # Procédure : procedures/workflow-config.md
 
 # Le schéma : champ → type. Un « ? » en tête du type marque un champ désactivable par « none ».
+# Deux schémas sont lus (procedures/workflow-config.md, « Changer de schéma ») : le 2 ajoute les trois
+# champs de config_since_schema, que la configuration BMAD générée par bin/install demande (story 1).
 declare -gA config_schema=(
   [workflow.schema]=schema
   [forge.repo]=repo
@@ -66,7 +68,16 @@ declare -gA config_schema=(
   [tests.protected-outputs]=?paths
   [bmad.version]=semver
   [bmad.modules]=words
+  [bmad.project-name]=label
+  [bmad.document-output-language]=label
+  [bmad.output-folder]=path
   [agents.skill-dirs]=paths
+)
+# Le schéma à partir duquel un champ existe ; un champ absent de cette table existe depuis le schéma 1.
+declare -gA config_since_schema=(
+  [bmad.project-name]=2
+  [bmad.document-output-language]=2
+  [bmad.output-folder]=2
 )
 declare -gA config_values=()
 config_loaded=""
@@ -81,7 +92,7 @@ config_fields() {
 config_check_type() {
   local value=$1 type=$2 word
   case $type in
-    schema) [[ $value == 1 ]] || { echo "schéma « $value » inconnu de cet outillage (schéma connu : 1)"; return 1; } ;;
+    schema) [[ $value == 1 || $value == 2 ]] || { echo "schéma « $value » inconnu de cet outillage (schémas connus : 1, 2)"; return 1; } ;;
     repo) [[ $value =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "« propriétaire/nom » attendu"; return 1; } ;;
     branch)
       { [[ $value =~ ^[A-Za-z0-9._/-]+$ && $value != -* ]] \
@@ -91,6 +102,7 @@ config_check_type() {
     words)
       [[ $value =~ ^[a-z0-9][a-z0-9.-]*( [a-z0-9][a-z0-9.-]*)*$ ]] \
         || { echo "liste de mots attendue (minuscules, chiffres, « . », « - »), séparés par une espace"; return 1; }
+      config_check_unique "$value" || return 1
       ;;
     path) config_check_path "$value" || return 1 ;;
     paths)
@@ -99,6 +111,7 @@ config_check_type() {
       for word in $value; do
         config_check_path "$word" || return 1
       done
+      config_check_unique "$value" || return 1
       ;;
     convention)
       case $value in
@@ -131,8 +144,32 @@ config_check_type() {
       [[ $value =~ ^[^[:space:]](.*[^[:space:]])?$ ]] \
         || { echo "texte sans espace en tête ni en fin attendu"; return 1; }
       ;;
+    label)
+      # Un libellé recopié tel quel, sans citation, dans un fichier TOML (« "…" ») et dans une valeur
+      # YAML nue (configuration BMAD générée) : rien qui y change le sens d'une ligne.
+      [[ ! $value =~ [[:cntrl:]] ]] || { echo "caractère de contrôle refusé"; return 1; }
+      [[ $value =~ ^[^[:space:]](.*[^[:space:]])?$ ]] || { echo "libellé sans espace en tête ni en fin attendu"; return 1; }
+      case $value in
+        *[\"\\\'\`#:{}\[\],\&\*\!\|\>%@]*)
+          echo "caractère refusé dans un libellé (aucun de \" \\ ' \` # : { } [ ] , & * ! | > % @)"
+          return 1
+          ;;
+      esac
+      ;;
     *) echo "type « $type » inconnu du lecteur"; return 1 ;;
   esac
+  return 0
+}
+
+# Une liste sans doublon : un mot écrit deux fois serait traité deux fois (bin/install poserait deux
+# fois le même lien, et échouerait au second, après d'autres écritures).
+config_check_unique() { # $1 = liste séparée par des espaces
+  local word
+  local -A seen=()
+  for word in $1; do
+    [[ -z ${seen[$word]+x} ]] || { echo "« $word » écrit deux fois dans la liste"; return 1; }
+    seen[$word]=1
+  done
   return 0
 }
 
@@ -179,20 +216,30 @@ config_load() { # $1 = fichier
     values[$key]=$value
   done < "$raw"
   rm -f "$raw"
+  # Le schéma du fichier décide des champs attendus. Illisible, il est signalé par la vérification de
+  # type ci-dessous, et les champs sont comptés au dernier schéma.
+  local level=2
+  [[ ${values[workflow.schema]:-} == 1 ]] && level=1
   for key in "${!seen[@]}"; do
     if [[ -z ${config_schema[$key]+x} ]]; then
-      problems+=("$key : champ inconnu du schéma 1 (section ou clé hors schéma, sous-section ou include compris).")
+      problems+=("$key : champ inconnu du schéma $level (section ou clé hors schéma, sous-section ou include compris).")
+      continue
+    fi
+    if ((${config_since_schema[$key]:-1} > level)); then
+      problems+=("$key : champ du schéma ${config_since_schema[$key]}, inconnu du schéma $level déclaré par workflow.schema.")
       continue
     fi
     count=${seen[$key]}
     ((count == 1)) || problems+=("$key : écrit $count fois ; une seule valeur est admise.")
   done
   for field in "${!config_schema[@]}"; do
+    ((${config_since_schema[$field]:-1} <= level)) || continue
     [[ -n ${seen[$field]+x} ]] || problems+=("$field : champ absent ; aucune valeur par défaut n'existe.")
   done
   for key in "${!values[@]}"; do
     type=${config_schema[$key]:-}
     [[ -n $type && ${seen[$key]} == 1 ]] || continue
+    ((${config_since_schema[$key]:-1} <= level)) || continue
     value=${values[$key]}
     if [[ -z $value ]]; then
       problems+=("$key : valeur vide.")
@@ -251,6 +298,9 @@ config_get() { # $1 = variable à remplir, $2 = champ
   local -n config_destination=$1
   [[ -n $config_loaded ]] || { printf 'config_get %s : aucun workflow.config chargé.\n' "$2" >&2; return 2; }
   [[ -n ${config_schema[$2]+x} ]] || { printf 'config_get : champ « %s » hors schéma.\n' "$2" >&2; return 2; }
+  [[ -n ${config_values[$2]+x} ]] \
+    || { printf 'config_get : champ « %s » du schéma %s, absent de %s (schéma %s).\n' "$2" \
+      "${config_since_schema[$2]:-1}" "$config_loaded" "${config_values[workflow.schema]}" >&2; return 2; }
   # shellcheck disable=SC2034 # référence (local -n) : cette affectation remplit la variable de l'appelant
   config_destination=${config_values[$2]}
 }

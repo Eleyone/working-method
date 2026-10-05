@@ -57,7 +57,9 @@ cd "$root"
 
 findings=0
 rc=0
-git grep -I -n -i -E -f "$tmp/noms" -- . > "$tmp/trouves" 2>"$tmp/err" || rc=$?
+# --text et non -I : un fichier « -diff » (.gitattributes : skills BMAD) passerait pour binaire et
+# serait sauté en silence
+git grep --text -n -i -E -f "$tmp/noms" -- . > "$tmp/trouves" 2>"$tmp/err" || rc=$?
 ((rc <= 1)) && [[ ! -s $tmp/err ]] || die "recherche impossible (git grep, code $rc)."
 if ((rc == 0)); then
   while IFS=: read -r file line _; do

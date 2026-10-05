@@ -30,7 +30,7 @@ jobs:
       - name: Prérequis bash 4.3
         shell: sh
         run: sh bin/check-bash
-      - name: Tests, aucun secret, aucun nom de projet, shellcheck
+      - name: Tests, aucun secret, aucun nom de projet, shellcheck, réinstallation de BMAD
         env:
           # liste des noms de projets consommateurs, hors de l'arbre (variable d'Actions du dépôt) :
           # absente, ci/check-names.sh sort en 2 (procedures/secrets.md)

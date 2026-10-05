@@ -1,0 +1,7 @@
+# Couche utilisatrice de BMAD : lue par bin/install, jamais écrite par lui.
+[core]
+user_name = "Utilisatrice fixture"
+communication_language = "Français"
+
+[modules.bmm]
+user_skill_level = "intermediate"

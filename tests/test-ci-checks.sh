@@ -107,6 +107,23 @@ case_secrets_espaces_reserves_admis() {
   assert_eq 0 "$rc" "les repères des procédures ne sont pas des secrets (messages : $out)"
 }
 
+case_secrets_reference_a_une_variable_d_environnement() {
+  # Les exemples de code de la méthode BMAD : un nom de variable, pas une valeur.
+  depot_propre
+  # shellcheck disable=SC2016 # code d'exemple écrit tel quel dans un fichier d'essai
+  printf 'const SERVICE_API_KEY = process.env.SERVICE_API_KEY;\nconst PACT_BROKER_TOKEN = process.env.PACT_BROKER_TOKEN!;\n' \
+    > "$work/depot/exemple.md"
+  commit_all "exemple" > /dev/null
+  secrets
+  assert_eq 0 "$rc" "une référence à une variable d'environnement n'est pas un secret (messages : $out)"
+  printf 'const A_TOKEN = process.env.A_TOKEN; const B_TOKEN = "%s";\n' "$(printf 'c%.0s' {1..32})" > "$work/depot/exemple.md"
+  commit_all "valeur à côté" > /dev/null
+  secrets tree
+  assert_eq 1 "$rc" "une vraie valeur sur la même ligne reste signalée"
+  secrets history
+  assert_eq 1 "$rc" "dans l'historique aussi"
+}
+
 case_secrets_le_depot_commun_est_propre() {
   run bash -c 'cd "$1" && bash ci/check-secrets.sh tree' _ "$common"
   assert_eq 0 "$rc" "l'arbre du dépôt commun, motifs du contrôle compris, ne contient aucun secret (messages : $out)"
@@ -161,6 +178,30 @@ case_noms_sans_liste_ne_controle_rien() {
   # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
   run env CHECK_NAMES_PATTERNS="$(printf 'eley''one[.]fr')" bash -c 'cd "$1" && bash "$2/ci/check-names.sh"' _ "$work/depot" "$common"
   assert_eq 0 "$rc" "la liste passée par la variable est lue (messages : $err)"
+}
+
+case_fichiers_moins_diff_lus_quand_meme() {
+  # .gitattributes marque les skills BMAD « -diff » (diff compact pour la revue) : git les tient alors
+  # pour binaires, et « git grep -I » comme « git log -p » les sauteraient en silence.
+  depot_propre
+  mkdir -p "$work/depot/vendu"
+  printf 'vendu/** -diff\n' > "$work/depot/.gitattributes"
+  printf 'cle: %s\n' "$(jeton)" > "$work/depot/vendu/a.md"
+  local nom
+  nom="eley""one.fr"
+  printf 'voir %s\n' "$nom" > "$work/depot/vendu/b.md"
+  commit_all "vendu" > /dev/null
+  secrets tree
+  assert_eq 1 "$rc" "un secret dans un fichier « -diff » de l'arbre est trouvé"
+  assert_contains "fichier vendu/a.md, ligne 1" "$out" "et situé"
+  rm "$work/depot/vendu/a.md"
+  commit_all "retrait" > /dev/null
+  secrets history
+  assert_eq 1 "$rc" "un secret dans un fichier « -diff » de l'historique est trouvé"
+  assert_contains "fichier vendu/a.md, ligne 1" "$out" "et situé dans l'historique"
+  noms
+  assert_eq 1 "$rc" "un nom de projet dans un fichier « -diff » est trouvé"
+  assert_contains "nom de projet dans vendu/b.md, ligne 1" "$out" "et situé"
 }
 
 case_preset_renovate() {

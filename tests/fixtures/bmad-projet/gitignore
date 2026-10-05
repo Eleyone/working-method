@@ -1,0 +1,9 @@
+# Devient le .gitignore du projet fixture (ci/bmad-reinstall.sh) : nommé ainsi pour ne pas ignorer,
+# dans le dépôt commun lui-même, les fichiers de la fixture.
+# Configuration BMAD générée par bin/install depuis workflow.config ET _bmad/config.user.toml :
+# propre à chaque utilisatrice, jamais versionnée (décision du 04/10/2026).
+/_bmad/*/config.yaml
+# Couche utilisatrice de BMAD et cache de rendu : jamais versionnés.
+/_bmad/config.user.toml
+/_bmad/custom/*.user.toml
+/_bmad/render/

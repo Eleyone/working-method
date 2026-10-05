@@ -1,0 +1,3 @@
+# Personnalisation d'équipe : jamais touchée par l'installeur ni par bin/install.
+[modules.bmm]
+project_knowledge = "{project-root}/documentation"

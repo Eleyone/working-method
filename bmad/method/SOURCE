@@ -1,0 +1,7 @@
+# Généré par bmad/update.sh — ne pas éditer : relancer le script (procedures/bmad.md).
+bmad-method 6.12.0
+bmb v2.2.2
+cis v0.3.2
+bmad-loop v0.11.1
+tea v1.27.2
+installeur : npx bmad-method@6.12.0 install --tools claude-code --modules core,bmm,bmb,cis,bmad-loop,tea, shims true

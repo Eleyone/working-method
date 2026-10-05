@@ -12,6 +12,9 @@
 #      fournit ci/ensure-shellcheck.sh (décision d'Arnaud du 04/10/2026). Les exclusions sont écrites
 #      ligne par ligne, chacune avec sa raison ; aucune n'est globale (.shellcheckrc). Un shellcheck
 #      impossible à fournir fait échouer l'étape : jamais « non lancé » compté comme réussi.
+#   6. ci/bmad-reinstall.sh, le test de réinstallation de BMAD (story 1, décision 9) : il rejoue
+#      l'installeur BMAD — node 20.12 ou plus, npx et le réseau (npm, GitHub) sont donc requis ici, sur
+#      le runner comme sur le poste ; une réinstallation impossible fait échouer l'étape (code 2).
 # Le prérequis bash est vérifié AVANT ce script, par bin/check-bash en POSIX sh (étape du workflow).
 #
 # Codes de sortie : 0 tout passe ; 1 au moins une étape en échec ; 2 jq impossible à fournir.
@@ -40,6 +43,7 @@ step "tests" bash tests/run.sh
 step "aucun secret" bash ci/check-secrets.sh
 step "aucun nom de projet" bash ci/check-names.sh
 step "shellcheck (tous niveaux)" bash ci/run-shellcheck.sh
+step "réinstallation de BMAD (réseau)" bash ci/bmad-reinstall.sh
 
 printf '\n'
 if ((${#failed[@]})); then

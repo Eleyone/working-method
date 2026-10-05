@@ -1,6 +1,6 @@
 # working-method
 
-Méthode de travail commune : outillage Gitea, revue LLM et gates de fusion, consommés en sous-module git par chaque projet. BMAD y entrera avec la story 1.
+Méthode de travail commune : outillage Gitea, revue LLM et gates de fusion, consommés en sous-module git par chaque projet. Il porte aussi BMAD : une seule version, installée ici seulement, reliée dans chaque projet par `bin/install` (`procedures/bmad.md`).
 
 Ce dépôt ne connaît aucun projet : tout ce qui est propre à un projet se déclare dans le `workflow.config` de ce projet (`procedures/workflow-config.md`). Il est public, et sa CI vérifie qu'il ne contient ni secret ni nom de projet consommateur (`procedures/secrets.md`).
 
@@ -9,7 +9,8 @@ Ce dépôt ne connaît aucun projet : tout ce qui est propre à un projet se dé
 | Dossier | Rôle |
 |---|---|
 | `bin/` | `install` (installation dans un projet, `procedures/adoption.md`), `check-bash` (prérequis bash 4.3, en POSIX sh) |
-| `lib/` | bibliothèques : `config.sh` (lecteur de `workflow.config`), `shell.sh`, `dotenv.sh`, `sprint.sh`, `require-bash.sh` |
+| `lib/` | bibliothèques : `config.sh` (lecteur de `workflow.config`), `bmad.sh` (version de BMAD, configuration générée), `shell.sh`, `dotenv.sh`, `sprint.sh`, `require-bash.sh` |
+| `bmad/` | BMAD : `bmad.config` (version, modules, épinglages), `update.sh` (le seul endroit où l'installeur BMAD tourne), `method/` (ce qu'il produit, relié dans chaque projet ; `procedures/bmad.md`) |
 | `gitea/` | adaptateur de la forge (`gitea.sh`) et ouverture de PR (`create-pull-request.sh`) |
 | `gates/` | verrous de fusion (`verify-and-merge-pr.sh`, `merge-gates.sh`) et cohérence du suivi de sprint (`sprint-consistency.sh`) |
 | `review/` | revue par un LLM d'un autre fournisseur (`llm-review.sh`), consignes communes (`prompts/`), couche projet de ce dépôt (`self-layer.md`) |

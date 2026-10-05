@@ -54,10 +54,10 @@ git submodule add <adresse du dépôt commun> .working-method
 .working-method/bin/install
 ```
 
-Il vérifie bash, valide `workflow.config`, puis pose `.working-method` (si besoin) et un lien par skill commun dans chaque dossier de `agents.skill-dirs`. Il ne remplace rien.
+Il vérifie bash, valide `workflow.config`, vérifie BMAD (version, modules, `_bmad/config.user.toml`), puis pose `.working-method` (si besoin), un lien par skill commun et par skill BMAD des modules activés dans chaque dossier de `agents.skill-dirs`, la méthode BMAD dans `_bmad/` par liens, et génère la configuration BMAD (`bmad.md`). Il ne remplace rien, sauf la configuration générée — et il le signale.
 
 - **Conflit** (code `1`, aucun lien posé) : le projet a déjà un skill du même nom. **Choisir et écrire** lequel sert — jamais deux skills homonymes qui se masquent. Si c'est le skill commun, retirer celui du projet dans la même PR, puis relancer ; si c'est celui du projet, `bin/install` refusera tant qu'il porte ce nom : la décision et sa mise en œuvre (renommer le skill du projet, par exemple) s'écrivent dans la story d'adoption.
-- **BMAD** : `bin/install` affiche `bmad.version` et `bmad.modules` et n'installe rien ; c'est la story 1.
+- **BMAD** (`bmad.md`, « Passer un projet sur le BMAD du sous-module ») : les copies locales de BMAD (skills `bmad-*` de chaque dossier d'outil, `_bmad/scripts`, `_bmad/<module>/module-help.csv`, `_bmad/_config/`) sont **supprimées dans la même PR** ; sinon chacune est un conflit. Écrire `_bmad/config.user.toml` (couche utilisatrice, jamais écrite par `bin/install`) et ignorer `_bmad/*/config.yaml` (générés, non versionnés) avant de lancer `bin/install`. ⛔ L'installeur BMAD ne se lance **jamais** dans le projet : il écrirait à travers les liens, dans le sous-module.
 - Relancé, il ne change rien : les liens posés se commitent avec le reste.
 - ⚠️ **Les liens doivent être suivis** par chaque outil d'agent visé (Claude Code, Cursor, Antigravity) : le vérifier en **chargeant une skill** dans chacun, pas en le supposant (AC 8).
 

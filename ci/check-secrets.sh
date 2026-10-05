@@ -44,6 +44,28 @@ patterns=(
   'https?://[^/[:space:]:@<>${}]+:[^/[:space:]@<>${}]+@'
 )
 
+# Une référence à une variable d'environnement est un nom, pas une valeur : les exemples de code de la
+# méthode BMAD en écrivent (« const SERVICE_API_KEY = process.env.SERVICE_API_KEY; »), et le motif des
+# affectations les prendrait pour des secrets. La référence est retirée de la ligne avant de juger ;
+# la ligne reste signalée si un motif la trouve encore — une vraie valeur à côté n'échappe pas.
+# shellcheck disable=SC2016 # expression régulière : « $ » n'y figure pas, les apostrophes sont littérales
+readonly env_reference='[=:][[:space:]]*["'"'"']?process\.env\.[A-Za-z_][A-Za-z0-9_]*["'"'"']?!?'
+
+# 0 si un motif ne trouve la ligne qu'à cause d'une référence à une variable d'environnement ; 1 sinon,
+# y compris quand une expression est illisible (le signalement est alors gardé).
+reference_only() { # $1 = contenu de la ligne
+  local line=$1 pattern code
+  [[ $line =~ $env_reference ]] || return 1
+  while [[ $line =~ $env_reference ]]; do line=${line//"${BASH_REMATCH[0]}"/=}; done
+  for pattern in "${patterns[@]}"; do
+    code=0
+    # shellcheck disable=SC2319 # le code voulu est celui du test [[ =~ ]] : 2 dit une expression invalide
+    [[ $line =~ $pattern ]] || code=$?
+    ((code == 1)) || return 1
+  done
+  return 0
+}
+
 mode=all range=()
 case ${1:-} in
   '') ;;
@@ -77,7 +99,7 @@ pattern_number() { # $1 fichier, $2 numéro de ligne
 
 # --- arbre de travail ----------------------------------------------------------------------------
 scan_tree() {
-  local paths path rc=0 hits
+  local paths path rc=0
   paths=$(git ls-files) || die "liste des fichiers suivis illisible."
   while IFS= read -r path; do
     [[ -n $path ]] || continue
@@ -85,25 +107,33 @@ scan_tree() {
       signal "chemin interdit dans l'arbre : $path"
     fi
   done <<< "$paths"
-  # git grep : fichiers binaires écartés (-I), aucune dépendance au grep du système pour le parcours
-  git grep -I -n -E -f "$tmp/motifs" -- . > "$tmp/arbre" 2>"$tmp/arbre.err" || rc=$?
+  # git grep, aucune dépendance au grep du système pour le parcours. ⛔ --text et non -I : les fichiers
+  # marqués « -diff » (.gitattributes : skills BMAD) passent pour binaires, et -I les sauterait en
+  # silence. Le dépôt ne suit aucun vrai binaire ; s'il en suivait un, il serait lu comme du texte.
+  git grep --text -n -E -f "$tmp/motifs" -- . > "$tmp/arbre" 2>"$tmp/arbre.err" || rc=$?
   ((rc <= 1)) && [[ ! -s $tmp/arbre.err ]] || die "recherche dans l'arbre impossible (git grep, code $rc)."
   ((rc == 0)) || return 0
-  # « chemin:ligne:contenu » : seuls le chemin et le numéro de ligne sont lus
-  hits=$(awk -F: '{ print $1 "\t" $2 }' "$tmp/arbre") || die "lecture des correspondances impossible."
-  local file line
-  while IFS=$'\t' read -r file line; do
-    [[ -n $file ]] || continue
+  # « chemin:ligne:contenu » : le contenu n'est lu que pour écarter une référence à une variable
+  # d'environnement ; il n'est jamais affiché
+  local hit file line content
+  while IFS= read -r hit; do
+    [[ -n $hit ]] || continue
+    file=${hit%%:*}
+    hit=${hit#*:}
+    line=${hit%%:*}
+    content=${hit#*:}
+    reference_only "$content" && continue
     signal "secret possible : fichier $file, ligne $line (motif $(pattern_number "$file" "$line"))"
-  done <<< "$hits"
+  done < "$tmp/arbre"
 }
 
 # --- historique ----------------------------------------------------------------------------------
 # Les lignes ajoutées par chaque commit sont écrites dans un fichier, une par ligne, et leur origine
 # (commit, chemin, ligne) dans un index parallèle ; grep cherche dans le premier, l'index nomme l'endroit.
 scan_history() {
-  local rc=0 numbers number where
-  git log "${range[@]}" --no-color --no-renames --no-ext-diff -p -U0 --format='commit %H' > "$tmp/log" \
+  local rc=0 numbers number where content
+  # --text : sans lui, un fichier « -diff » s'écrit « Binary files differ » et ses lignes échappent
+  git log "${range[@]}" --no-color --no-renames --no-ext-diff --text -p -U0 --format='commit %H' > "$tmp/log" \
     || die "lecture de l'historique impossible."
   awk -v content="$tmp/ajouts" -v index_file="$tmp/index" '
     /^commit [0-9a-f]+$/ && length($2) == 40 { sha = substr($2, 1, 12); header = 0; next }
@@ -127,6 +157,8 @@ scan_history() {
   if ((rc == 0)); then
     numbers=$(cut -d: -f1 "$tmp/trouves") || die "lecture des correspondances impossible."
     while IFS= read -r number; do
+      content=$(sed -n "${number}p" "$tmp/ajouts") || die "lignes ajoutées illisibles."
+      reference_only "$content" && continue
       where=$(sed -n "${number}p" "$tmp/index") || die "index illisible."
       IFS=$'\t' read -r sha path line <<< "$where"
       signal "secret possible dans l'historique : commit $sha, fichier $path, ligne $line (motif $(pattern_number "$tmp/ajouts" "$number"))"

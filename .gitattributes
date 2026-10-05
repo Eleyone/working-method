@@ -1,0 +1,8 @@
+# Skills BMAD : contenu tiers, écrit par bmad/update.sh et jamais à la main. « -diff » montre leurs .md en
+# « Binary files differ » dans un diff, celui que lit la revue LLM compris : 14 Mo de prose n'entreraient
+# pas dans sa fenêtre, et leur contenu est prouvé autrement — la CI rejoue l'installeur et exige le même
+# arbre (ci/bmad-reinstall.sh). Pour lire le vrai diff : git diff --text.
+# ⛔ Les scripts (.py, .js, .cjs, .sh…) restent visibles : du code exécutable n'est jamais caché à la
+# revue (revue 4 de la PR n° 6).
+# ⛔ Les contrôles « aucun secret » et « aucun nom de projet » lisent ces fichiers quand même (--text).
+bmad/method/skills/**/*.md -diff linguist-generated=true

@@ -151,11 +151,14 @@ case_config_none_desactive_et_se_lit() {
 
 case_config_types_invalides() {
   local change
-  for change in workflow.schema=2 forge.repo=sans-barre "forge.base=a..b" "forge.base=-dev" \
+  for change in workflow.schema=3 forge.repo=sans-barre "forge.base=a..b" "forge.base=-dev" \
     "forge.branch-prefixes=feat/ fix" "forge.env-file=/etc/env" "forge.env-file=../.env" \
     "forge.env-file=a/./b" "sprint.convention=libre" review.report=courriel review.timeout=15m \
     review.timeout=0 "review.exempt-paths=(" ci.bootstrap=yes bmad.version=6.12 \
-    "review.private-paths=.env  docs" "review.reviewer-for-claude=Gemini Pro" "ci.status-context= checks"; do
+    "review.private-paths=.env  docs" "review.reviewer-for-claude=Gemini Pro" "ci.status-context= checks" \
+    "bmad.project-name=a: b" "bmad.project-name=x\"y" "bmad.document-output-language=[fr]" \
+    "bmad.project-name=a#b" "bmad.output-folder=../sortie" "bmad.modules=core bmm core" \
+    "agents.skill-dirs=.claude/skills .agents/skills .claude/skills" "forge.branch-prefixes=feat fix feat"; do
     write_workflow_config "$work/projet" "$change"
     load
     assert_eq 2 "$rc" "type invalide refusé : $change"
@@ -165,7 +168,8 @@ case_config_types_invalides() {
 
 case_config_types_valides() {
   local change
-  for change in "ci.status-context=CI Tests & Quality" "review.exempt-paths=[.]md$" \
+  for change in "bmad.project-name=site.example" "bmad.document-output-language=Français" \
+    "bmad.project-name=Outil de calcul" "ci.status-context=CI Tests & Quality" "review.exempt-paths=[.]md$" \
     "checks.command=make test-ci" forge.release-branch=master "forge.branch-prefixes=feat fix refactor"; do
     write_workflow_config "$work/projet" "$change"
     load
@@ -280,6 +284,43 @@ case_config_racine_du_projet() {
   mkdir -p "$work/hors"
   run bash -c 'cd "$1" && . "$2/lib/config.sh" && config_project_root r' _ "$work/hors" "$common"
   assert_eq 2 "$rc" "hors d'un dépôt git, la racine est introuvable"
+}
+
+case_config_schema_1_toujours_lu() {
+  # « Changer de schéma » (procedures/workflow-config.md) : le lecteur apprend les deux.
+  write_workflow_config "$work/projet" workflow.schema=1 -bmad.project-name -bmad.document-output-language -bmad.output-folder
+  load
+  assert_eq 0 "$rc" "un fichier au schéma 1, sans les champs du schéma 2, se lit (messages : $err)"
+  config_load "$work/projet/workflow.config"
+  run config_get valeur bmad.project-name
+  assert_eq 2 "$rc" "un champ du schéma 2 ne se lit pas dans un fichier au schéma 1"
+  assert_contains "schéma 2" "$err" "et le message le dit"
+  run config_get valeur bmad.version
+  assert_eq 0 "$rc" "un champ du schéma 1 se lit"
+}
+
+case_config_champ_du_schema_2_dans_un_fichier_au_schema_1() {
+  write_workflow_config "$work/projet" workflow.schema=1 -bmad.document-output-language -bmad.output-folder
+  load
+  assert_eq 2 "$rc" "un champ du schéma 2 est inconnu du schéma 1"
+  assert_contains "bmad.project-name : champ du schéma 2, inconnu du schéma 1" "$err" "le champ et les schémas sont nommés"
+}
+
+case_config_schema_2_exige_ses_champs() {
+  local champ
+  for champ in bmad.project-name bmad.document-output-language bmad.output-folder; do
+    write_workflow_config "$work/projet" "-$champ"
+    load
+    assert_eq 2 "$rc" "$champ est requis au schéma 2"
+    assert_contains "$champ : champ absent" "$err" "le champ est nommé"
+  done
+}
+
+case_config_doublon_nomme() {
+  write_workflow_config "$work/projet" "bmad.modules=core bmm core"
+  load
+  assert_eq 2 "$rc" "un module écrit deux fois est refusé"
+  assert_contains "bmad.modules : « core » écrit deux fois dans la liste" "$err" "le champ et le mot fautif sont nommés"
 }
 
 run_case "$@"

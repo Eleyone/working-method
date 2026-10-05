@@ -37,11 +37,17 @@ avec le nom de chaque champ fautif et la raison, et l'outil sort en **code `2`**
 et l'outil qui la porte **le dit** dans sa sortie (« désactivé (… = none) ») — il ne la rend jamais
 verte en silence. Sur un champ non désactivable, `none` est une erreur de type.
 
-## Les champs — schéma 1
+## Les champs — schéma 2
+
+Le lecteur lit les schémas **1 et 2** (« Changer de schéma », ci-dessous). Le schéma 2 ajoute les
+trois champs `bmad.project-name`, `bmad.document-output-language` et `bmad.output-folder`, dont
+`bin/install` génère la configuration BMAD du projet (story 1) : au schéma 1, ils sont **inconnus**
+(code `2` s'ils sont écrits), et `bin/install` refuse en `2` en demandant le schéma 2. Les autres
+outils lisent indifféremment les deux.
 
 | Champ | Type | Désactivable | Lu par |
 |---|---|---|---|
-| `workflow.schema` | `1` | non | tous |
+| `workflow.schema` | `1` \| `2` | non | tous |
 | `forge.repo` | `propriétaire/nom` | non | `gitea/gitea.sh` : dépôt distant vérifié, appels à l'API |
 | `forge.base` | branche (`git check-ref-format --branch`) | non | `create-pull-request`, `verify-and-merge-pr`, `llm-review` |
 | `forge.release-branch` | branche, différente de la base | **oui** | refus des PR vers elle (`create-pull-request`, `verify-and-merge-pr`) |
@@ -67,11 +73,16 @@ verte en silence. Sur un champ non désactivable, `none` est une erreur de type.
 | `checks.command` | commande, lancée à la racine | **oui** | `verify-and-merge-pr` : substitut d'amorçage |
 | `checks.dir` | chemin | **oui** | `checks/run-checks.sh` |
 | `tests.protected-outputs` | chemins séparés par une espace | **oui** | `tests/run.sh` |
-| `bmad.version` | `X.Y.Z` | non | `bin/install` (story 1) |
-| `bmad.modules` | mots séparés par une espace | non | `bin/install` (story 1) |
+| `bmad.version` | `X.Y.Z` | non | `bin/install` : doit être la version que porte le sous-module (`bmad/bmad.config`), sinon code `1` |
+| `bmad.modules` | mots séparés par une espace | non | `bin/install` : modules activés, parmi l'union du sous-module (sinon `1`), `core` compris |
+| `bmad.project-name` *(schéma 2)* | libellé | non | `bin/install` : `project_name` de la configuration BMAD générée |
+| `bmad.document-output-language` *(schéma 2)* | libellé | non | `bin/install` : `document_output_language` |
+| `bmad.output-folder` *(schéma 2)* | chemin | non | `bin/install` : `output_folder`, et les dossiers d'artefacts qui en dérivent |
 | `agents.skill-dirs` | chemins séparés par une espace | non | `bin/install` |
 
-Un **chemin** est relatif à la racine du projet, sans `/` initial, sans `.` ni `..`, sans blanc ni
+Un **libellé** est recopié tel quel, sans citation, dans un fichier TOML et dans une valeur YAML
+générés : ni espace en tête ou en fin, ni caractère de contrôle, ni aucun de `"`, `\`, `'`,
+`` ` ``, `#`, `:`, `{`, `}`, `[`, `]`, `,`, `&`, `*`, `!`, `|`, `>`, `%`, `@`. Un **chemin** est relatif à la racine du projet, sans `/` initial, sans `.` ni `..`, sans blanc ni
 `/` final. Un **booléen** s'écrit `true` ou `false`, jamais `yes`, `on` ou `1`, que git accepterait.
 
 ### Règles entre champs
@@ -84,7 +95,7 @@ Un **chemin** est relatif à la racine du projet, sans `/` initial, sans `.` ni 
 
 ### Valeurs posées pour la suite
 
-Trois valeurs sont au schéma pour qu'il ne change pas sous les projets, mais l'outillage ne sait pas
+Deux valeurs sont au schéma pour qu'il ne change pas sous les projets, mais l'outillage ne sait pas
 encore les servir. Un outil qui les rencontre sort en `2` en nommant la story qui les apportera —
 jamais un repli silencieux :
 
@@ -92,7 +103,6 @@ jamais un repli silencieux :
 |---|---|
 | `sprint.convention = keyed` (clés en kebab-case, bloc `aliases:`) | 5 |
 | `review.report = file` (rapport versionné plutôt que commentaire de PR) | 8 |
-| `bmad.version`, `bmad.modules` | 1 — `bin/install` les lit, les affiche, et n'installe rien |
 
 ## Pièges de la syntaxe
 
