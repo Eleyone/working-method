@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Pièges du tableau « Pièges connus » de procedures/shell-scripts.md qui tiennent au shell lui-même,
+# et non à un script de ce dépôt. Chaque cas rejoue le piège (la forme fautive rend ce que le tableau
+# annonce) puis sa parade (la forme sûre rend ce qu'on attend) : si un shell changeait de
+# comportement, le tableau deviendrait faux, et ce fichier le dirait.
+# « set -euo pipefail » vient de tests/lib.sh, comme pour chaque fichier de test.
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+case_piege_tail_rend_le_code_de_tail() {
+  # Sans pipefail (POSIX sh), un pipeline rend le code de sa dernière commande.
+  run sh -c 'false | tail -n 1'
+  assert_eq 0 "$rc" "piège : « commande | tail » rend 0 quand la commande échoue"
+  # Parade : la sortie dans un fichier, le code testé, puis le fichier affiché.
+  run sh -c 'f=$(mktemp) || exit 2; false > "$f"; code=$?; tail -n 1 "$f"; rm -f "$f"; exit "$code"'
+  assert_eq 1 "$rc" "parade : le code de la commande arrive jusqu'à l'appelant"
+}
+
+case_piege_for_sur_une_substitution_avale_l_echec() {
+  # « for x in $(cmd) » : la substitution échoue, la boucle ne tourne pas, et rend 0, même sous set -e.
+  for shell in sh bash; do
+    # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
+    run "$shell" -ec 'for x in $(false); do echo "jamais : $x"; done; echo "garde passée"'
+    assert_eq 0 "$rc" "piège ($shell) : la boucle sur une substitution en échec rend 0"
+    assert_eq "garde passée" "$out" "piège ($shell) : la garde passe sans avoir rien vérifié"
+    # Parade : la liste lue dans une variable d'abord, avec son arrêt.
+    # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
+    run "$shell" -ec 'liste=$(false) || { echo "liste illisible" >&2; exit 2; }; for x in $liste; do :; done; echo "jamais"'
+    assert_eq 2 "$rc" "parade ($shell) : l'échec de l'extracteur arrête la garde"
+    assert_eq "" "$out" "parade ($shell) : rien ne s'exécute après l'arrêt"
+  done
+}
+
+case_piege_grep_tue_par_sigpipe_sous_pipefail() {
+  # « grep … | head -n 1 » sous pipefail : head sort après la première ligne, grep écrit encore et
+  # reçoit SIGPIPE (128 + 13 = 141), et pipefail fait échouer le pipeline. Le fichier dépasse la
+  # capacité d'un tube, si bien que grep écrit après la sortie de head : le résultat ne dépend pas de
+  # la vitesse de la machine. Sur une entrée plus courte, c'est une course (gagnée ou perdue selon la
+  # charge), ce qui rend le piège plus dangereux encore.
+  seq 1 200000 > "$work/lignes"
+  run bash -c 'set -o pipefail; grep "1" "$1" | head -n 1' _ "$work/lignes"
+  assert_eq 141 "$rc" "piège : grep tué par SIGPIPE fait échouer le pipeline, sans un message"
+  assert_eq "" "$err" "piège : aucun message d'erreur"
+  # Parade : grep s'arrête lui-même à la première correspondance, ou la sortie est lue en entier
+  # dans une variable avant d'être filtrée.
+  run bash -c 'set -o pipefail; grep -m 1 "1" "$1"' _ "$work/lignes"
+  assert_eq 0 "$rc" "parade : grep -m 1 rend 0"
+  assert_eq 1 "$out" "parade : la première correspondance"
+}
+
+case_piege_dash_sans_sous_chaine() {
+  # ${VAR:0:N} n'est pas POSIX : bash et le sh de BusyBox l'acceptent, dash le refuse à l'exécution,
+  # et « sh -n » ne le voit pas. Un script POSIX sh essayé sous bash ou BusyBox seulement passe.
+  local dash_bin
+  dash_bin=$(command -v dash) || skip_case "dash absent de ce poste : le piège ne se rejoue que sous dash"
+  # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
+  run "$dash_bin" -n -c 'v=abcdef; printf "%s\n" "${v:0:2}"'
+  assert_eq 0 "$rc" "piège : la vérification de syntaxe ne voit rien"
+  # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
+  run "$dash_bin" -c 'v=abcdef; printf "%s\n" "${v:0:2}"'
+  assert_eq 2 "$rc" "piège : dash refuse \${v:0:2} à l'exécution (sortie : $out)"
+  assert_contains "Bad substitution" "$err" "piège : dash le refuse à l'exécution"
+  # Parade POSIX : retirer le reste plutôt que prendre le début.
+  # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
+  run "$dash_bin" -c 'v=abcdef; reste=${v#??}; printf "%s\n" "${v%"$reste"}"'
+  assert_eq 0 "$rc" "parade : dash l'accepte (messages : $err)"
+  assert_eq ab "$out" "parade : les deux premiers caractères"
+}
+
+run_case "$@"
