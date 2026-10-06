@@ -159,6 +159,54 @@ tests_pdf() { # $1 = chemin, $2 = texte de la page, $3 = auteur (métadonnée), 
   } > "$chemin"
 }
 
+# Le lanceur place en tête du PATH de chaque cas de faux docker, curl, psql et ssh, qui font échouer le
+# cas (tests/run.sh) ; leur dossier, marqué d'un fichier .faux-du-lanceur, est dans TESTS_FORBIDDEN_DIR.
+# Un cas qui emploie l'un de ces outils HORS RÉSEAU (curl sur une URL file://, par exemple) demande
+# nommément le vrai binaire : le PATH est parcouru sans les dossiers marqués ; une entrée vide du PATH (le dossier courant) n'est jamais retenue. Rend 1
+# si l'outil est introuvable. Pour curl, préférer file_only_curl, qui refuse toute autre URL.
+real_command() { # $1 outil ; affiche le chemin du vrai binaire
+  local dir
+  local -a dirs
+  IFS=: read -r -a dirs <<< "$PATH"
+  for dir in ${dirs[@]+"${dirs[@]}"}; do
+    # un dossier de faux porte la marque du lanceur : celui de ce lanceur, et ceux d'un lanceur qui
+    # l'a lui-même lancé (tests/test-run.sh lance run.sh dans un cas)
+    [[ -n $dir && ! -e $dir/.faux-du-lanceur ]] || continue
+    if [[ -f $dir/$1 && -x $dir/$1 ]]; then
+      printf '%s\n' "$dir/$1"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Un chemin cité pour sh, entre apostrophes, les siennes échappées : pour écrire un faux binaire.
+sh_quote() { # $1 chemin ; l'affiche cité
+  local q="'"
+  printf "'%s'" "${1//$q/$q\\$q$q}"
+}
+
+# Un curl réduit aux URL file:// : le vrai, pour un script testé qui « télécharge » un fichier local.
+# Une URL d'un autre schéma passe au faux curl du lanceur, qui note l'appel et fait échouer le cas ;
+# hors du lanceur, elle est refusée en 2. Une adresse sans schéma (« curl example.com ») ne se
+# distingue pas d'un argument ordinaire : curl lui-même la refuse, par --proto =file (et
+# --proto-redir =file pour une redirection), placés avant ET après ses arguments. Une option --proto*
+# du script testé passe au faux du lanceur, comme une URL : rien ne lève la restriction.
+file_only_curl() { # $1 = dossier où écrire curl
+  local real refuse
+  real=$(real_command curl) || { echo "tests: curl introuvable." >&2; exit 2; }
+  if [[ -n ${TESTS_FORBIDDEN_DIR:-} ]]; then
+    refuse="exec $(sh_quote "$TESTS_FORBIDDEN_DIR/curl") \"\$@\""
+  else
+    refuse='echo "tests: curl hors file:// refusé." >&2; exit 2'
+  fi
+  mkdir -p "$1"
+  # shellcheck disable=SC2016 # faux binaire écrit sur le disque : ses « $ » s'y développent à l'exécution
+  printf '#!/bin/sh\nfor a in "$@"; do\n  case $a in\n    file://*) ;;\n    *://* | --proto*) %s ;;\n  esac\ndone\nexec %s --proto =file --proto-redir =file "$@" --proto =file --proto-redir =file\n' \
+    "$refuse" "$(sh_quote "$real")" > "$1/curl"
+  chmod 755 "$1/curl"
+}
+
 skip_case() { # $1 raison
   printf 'IGNORÉ : %s\n' "$1"
   exit 3

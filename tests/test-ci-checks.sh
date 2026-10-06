@@ -227,12 +227,18 @@ case_workflow_nomme_comme_la_protection() {
 # --- ci/ensure-shellcheck.sh ------------------------------------------------------------------------
 # Aucun réseau : l'archive vient d'un fichier local (file://), et les outils du script sont reliés un
 # par un dans un PATH d'essai, si bien qu'un shellcheck installé sur le poste ne s'y glisse jamais.
+# Le curl relié est file_only_curl : le vrai, réduit aux URL file:// (le lanceur place un faux curl en
+# tête du PATH, et le script testé n'a jamais le réseau). Les autres outils viennent de real_command.
 outils_shellcheck() { # $1 = dossier ; $2… = outils à NE PAS relier
   local outil chemin
   mkdir -p "$1"
   for outil in sh curl sha256sum tar gzip uname sed cut dirname mkdir rm chmod mv cat printf; do
     [[ " ${*:2} " != *" $outil "* ]] || continue
-    chemin=$(command -v "$outil") || continue
+    if [[ $outil == curl ]]; then
+      file_only_curl "$1"
+      continue
+    fi
+    chemin=$(real_command "$outil") || continue
     [[ $chemin == /* ]] || continue # builtin sans binaire : le sh d'essai a le sien
     ln -sf "$chemin" "$1/$outil"
   done
@@ -516,7 +522,9 @@ case_shellcheck_fournisseur_en_echec_rend_2() {
   depot_shellcheck 1
   # shellcheck disable=SC2016 # faux shellcheck écrit sur le disque : son « $1 » s'y développe à l'exécution
   printf '#!/bin/sh\n[ "$1" = --version ] && { echo "version: 0.9.0"; exit 0; }\n: > %q\n' "$work/arguments" > "$work/sc/shellcheck"
-  run env PATH="$work/sc:$PATH" TMPDIR="$work" RUNNER_TEMP="$work/job" ENSURE_SHELLCHECK_URL="file://$work/absente.tar.gz" \
+  # le vrai curl, réduit aux URL file://, devant le faux du lanceur
+  file_only_curl "$work/vrai-curl"
+  run env PATH="$work/sc:$work/vrai-curl:$PATH" TMPDIR="$work" RUNNER_TEMP="$work/job" ENSURE_SHELLCHECK_URL="file://$work/absente.tar.gz" \
     bash "$work/depot/ci/run-shellcheck.sh"
   assert_eq 2 "$rc" "shellcheck impossible à fournir : code 2"
   assert_contains "shellcheck épinglé impossible à fournir" "$err" "raison"
