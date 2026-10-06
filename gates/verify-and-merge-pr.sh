@@ -79,6 +79,9 @@ fi
 tmp=$(mktemp -d)
 worktree=""
 cleanup() {
+  # « worktree remove --force » retire aussi une copie dont les sous-modules ont été peuplés, avec leurs
+  # dépôts rangés sous .git/worktrees/<copie>/modules du dépôt de travail (vérifié par les cas du
+  # substitut d'amorçage, tests/test-forge-simulee.sh)
   if [[ -n $worktree ]]; then
     git -C "$root" worktree remove --force "$worktree" >/dev/null 2>&1 || true
     git -C "$root" worktree prune >/dev/null 2>&1 || true
@@ -209,6 +212,79 @@ else
   indent <<< "$guard_out"
 fi
 
+# --- copie de la tête pour le substitut d'amorçage : ses sous-modules ---------------------------
+# Tout refus de construire une copie complète sort en 2 (die) : l'audit ne peut pas conclure, ce n'est
+# pas un verrou qui bloque. Jamais un contrôle lancé sur une copie où un sous-module serait vide.
+readonly submodule_remedy="« git submodule update --init » dans le dépôt de travail, puis relancer l'audit."
+
+# Les sous-modules que la tête épingle, et d'où les peupler : chacun doit être initialisé dans le dépôt
+# de travail, y avoir le commit épinglé, et ne contenir lui-même aucun sous-module.
+# ⚠️ Un dossier de sous-module VIDE (clone sans « submodule update », « submodule deinit ») n'a pas de
+# .git — ou un .git qui n'est pas un dépôt : « git -C » y remonte au dépôt PARENT, qui peut avoir le
+# commit épinglé (récupéré par un fetch). Le sous-module doit donc être sa propre racine :
+# « rev-parse --show-prefix » y rend une ligne vide, et « <chemin>/ » quand le parent répond (même
+# garde que review/llm-review.sh).
+submodule_sources() { # $1 fichier écrit : « chemin NUL SHA NUL nom NUL » par sous-module
+  local entry sub_path sub_sha sub_dir sub_prefix sub_name record key
+  : > "$1"
+  git ls-tree -r -z "$head_sha" > "$tmp/arbre" || die "lecture de l'arbre de la tête impossible."
+  # les chemins du .gitmodules de la tête ; absent, ou sans entrée (code 1 de git config) : liste vide
+  : > "$tmp/gitmodules"
+  if git cat-file -e "$head_sha:.gitmodules" 2>/dev/null; then
+    local rc=0
+    git config --blob "$head_sha:.gitmodules" -z --get-regexp '^submodule\..*\.path$' > "$tmp/gitmodules" 2>/dev/null || rc=$?
+    ((rc <= 1)) || die "lecture du .gitmodules de la tête impossible."
+  fi
+  while IFS= read -r -d '' entry; do
+    [[ $entry == "160000 commit "* ]] || continue
+    sub_path=${entry#*$'\t'}
+    sub_sha=${entry%%$'\t'*}
+    sub_sha=${sub_sha##* }
+    sub_dir=$root/$sub_path
+    sub_prefix=$(git -C "$sub_dir" rev-parse --show-prefix 2>/dev/null) \
+      || die "sous-module $sub_path non initialisé (git ne le lit pas) : $submodule_remedy"
+    [[ -z $sub_prefix ]] \
+      || die "sous-module $sub_path non initialisé (son dossier relève du dépôt parent) : $submodule_remedy"
+    git -C "$sub_dir" cat-file -e "$sub_sha^{commit}" 2>/dev/null \
+      || die "sous-module $sub_path sans le commit ${sub_sha:0:7} de la tête : $submodule_remedy"
+    # un sous-module imbriqué resterait vide dans la copie : refusé, plutôt que peuplé à moitié
+    git -C "$sub_dir" ls-tree -r -z "$sub_sha" > "$tmp/arbre-sous-module" \
+      || die "lecture de l'arbre du sous-module $sub_path impossible."
+    while IFS= read -r -d '' entry; do
+      [[ $entry == "160000 commit "* ]] || continue
+      die "sous-module $sub_path contient lui-même un sous-module (${entry#*$'\t'}) : le substitut d'amorçage ne peuple pas les sous-modules imbriqués."
+    done < "$tmp/arbre-sous-module"
+    # le nom du sous-module, que « submodule update » attend dans sa configuration : aucune entrée
+    # dans le .gitmodules de la tête, rien ne dit où le peupler
+    sub_name=""
+    while IFS= read -r -d '' record; do
+      key=${record%%$'\n'*}
+      [[ ${record#*$'\n'} == "$sub_path" ]] || continue
+      sub_name=${key#submodule.}
+      sub_name=${sub_name%.path}
+    done < "$tmp/gitmodules"
+    [[ -n $sub_name ]] || die "sous-module $sub_path absent du .gitmodules de la tête : le substitut d'amorçage ne sait pas le peupler."
+    printf '%s\0%s\0%s\0' "$sub_path" "$sub_sha" "$sub_name" >> "$1"
+  done < "$tmp/arbre"
+}
+
+# Peuple chaque sous-module de la copie depuis le dépôt de travail, sans réseau : l'URL du sous-module
+# est remplacée, pour cette seule commande, par son dossier dans le dépôt de travail (git -c, jamais
+# dans la configuration du dépôt). --checkout l'emporte sur un « update = none » du .gitmodules. Puis
+# la ceinture : dans la copie, git doit répondre pour le sous-module lui-même, au commit épinglé.
+populate_submodules() { # $1 fichier écrit par submodule_sources
+  local sub_path sub_sha sub_name copy_prefix copy_head
+  while IFS= read -r -d '' sub_path && IFS= read -r -d '' sub_sha && IFS= read -r -d '' sub_name; do
+    git -C "$worktree" -c protocol.file.allow=always -c "submodule.$sub_name.url=$root/$sub_path" \
+      -c "submodule.$sub_name.active=true" submodule update --quiet --checkout -- "$sub_path" > /dev/null 2>&1 \
+      || die "peuplement du sous-module $sub_path dans la copie impossible : $submodule_remedy"
+    copy_prefix=$(git -C "$worktree/$sub_path" rev-parse --show-prefix 2>/dev/null) || copy_prefix=x
+    copy_head=$(git -C "$worktree/$sub_path" rev-parse --verify --quiet HEAD 2>/dev/null) || copy_head=""
+    [[ -z $copy_prefix && $copy_head == "$sub_sha" ]] \
+      || die "sous-module $sub_path absent de la copie au commit ${sub_sha:0:7} : le contrôle ne tourne pas sur une copie incomplète."
+  done < "$1"
+}
+
 # --- verrou 4 : CI ------------------------------------------------------------------------------
 if [[ $ci_workflow == none ]]; then
   report inactif "CI" "désactivée (ci.workflow = none) : aucun statut de CI n'est exigé — ce n'est pas une CI verte."
@@ -235,13 +311,21 @@ else
       checks_entry=${checks_command%% *}
       if git cat-file -e "$head_sha:$checks_entry" 2>/dev/null; then
         substitute="$substitute, $checks_command sur la tête"
+        # Ce qui manque à la copie de la tête, et sa parade :
+        # - .tools/ et .env, ignorés par git : les binaires épinglés viennent du dépôt de travail
+        #   (TOOLS_LOCAL_DIR), et les valeurs du projet de ses propres fichiers commités. Sans cela, les
+        #   contrôles n'y trouveraient pas leurs outils et le substitut bloquerait toute PR (entrée
+        #   reportée de la story 0.7 du projet source) ;
+        # - les sous-modules : « git worktree add » n'en initialise aucun, leurs dossiers y sont vides.
+        #   Un contrôle qui lit un sous-module sans en vérifier la présence y passerait à tort, un
+        #   « git -C <sous-module> » y répondrait pour la copie elle-même, et un contrôle qui exige le
+        #   sous-module y refuserait sans avoir rien contrôlé. La copie est donc peuplée depuis le
+        #   sous-module du dépôt de travail, jamais depuis la forge (submodule_sources, populate_submodules).
+        # La commande est découpée sur les espaces, jamais évaluée par le shell.
+        submodule_sources "$tmp/sous-modules"
         worktree="$tmp/copie"
         git worktree add --quiet --detach "$worktree" "$head_sha" 2>/dev/null || die "création de la copie de la tête impossible."
-        # La copie n'a ni .tools/ ni .env, tous deux ignorés par git : les binaires épinglés viennent du
-        # dépôt de travail (TOOLS_LOCAL_DIR), et les valeurs du projet de ses propres fichiers commités.
-        # Sans cela, les contrôles n'y trouveraient pas leurs outils et le substitut bloquerait toute PR
-        # (entrée reportée de la story 0.7 du projet source). La commande est découpée sur les espaces,
-        # jamais évaluée par le shell.
+        populate_submodules "$tmp/sous-modules"
         read -r -a checks_argv <<< "$checks_command"
         if ! check_out=$(cd "$worktree" && TOOLS_LOCAL_DIR="$root/.tools" "${checks_argv[@]}" 2>&1); then
           substitute_ok=0

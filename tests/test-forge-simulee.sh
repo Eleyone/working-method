@@ -302,8 +302,9 @@ FAUX
 }
 
 # Le projet consomme un sous-module « commun » ; la PR en monte la version.
+# $@ = changements du workflow.config, passés à projet
 projet_avec_sous_module() {
-  projet
+  projet "$@"
   local commun=$work/commun
   mkdir -p "$commun"
   git -C "$commun" init -q
@@ -500,11 +501,11 @@ case_revue_sous_module_sans_le_commit() {
 
 # Un faux binaire qui échoue quand ses arguments contiennent les deux motifs donnés, et délègue au vrai
 # sinon : chaque garde de l'export des sous-modules est éprouvée sur l'échec qu'elle doit arrêter.
-faux_qui_echoue() { # $1 binaire, $2 et $3 motifs (expressions de [[ =~ ]]) cherchés dans « $* »
+faux_qui_echoue() { # $1 binaire, $2 et $3 motifs (expressions de [[ =~ ]]) cherchés dans « $* », $4 code (1)
   local vrai
   vrai=$(command -v "$1") || { echo "préparation : $1 introuvable" >&2; exit 1; }
   # shellcheck disable=SC2016 # faux binaire écrit sur le disque : ses « $ » s'y développent à l'exécution
-  printf '#!/usr/bin/env bash\nm1=%q m2=%q\n[[ "$*" =~ $m1 && "$*" =~ $m2 ]] && exit 1\nexec %q "$@"\n' "$2" "$3" "$vrai" > "$work/bin/$1"
+  printf '#!/usr/bin/env bash\nm1=%q m2=%q\n[[ "$*" =~ $m1 && "$*" =~ $m2 ]] && exit %q\nexec %q "$@"\n' "$2" "$3" "${4:-1}" "$vrai" > "$work/bin/$1"
   chmod +x "$work/bin/$1"
 }
 
@@ -618,6 +619,255 @@ case_revue_anciennes_cles_rendent_2_avec_la_nouvelle_forme() {
   assert_contains "review.reviewer-for-claude : retiré au schéma 3 : la table review.reviewers le remplace" "$err" "la nouvelle forme est nommée"
   [[ ! -e $work/copie-vue ]] || { echo "un relecteur a été appelé sur une configuration refusée" >&2; exit 1; }
   assert_eq "" "$(appels)" "aucun appel à la forge"
+}
+
+# --- verify-and-merge-pr : le substitut d'amorçage ------------------------------------------------
+# Règle d'amorçage (ci.bootstrap = true) : le workflow ci.workflow est absent de la base, et la tête
+# n'a aucun statut de CI. Le script lance alors lui-même checks.command, dans une copie de la tête
+# créée par « git worktree add ». Une telle copie n'a AUCUN sous-module initialisé : leurs dossiers y
+# sont vides. Un contrôle qui lit le sous-module sans en vérifier la présence y passerait à tort, et un
+# contrôle qui la vérifie y refuserait sans avoir rien contrôlé. Le substitut peuple donc les
+# sous-modules de la copie depuis ceux du dépôt de travail, sans réseau, ou refuse en 2.
+
+# Le contrôle du projet (checks.command = scripts/check.sh), écrit AVANT la création du projet, pour
+# être dans la base comme dans la tête. Il note toujours le dossier où il tourne : un cas qui refuse
+# vérifie ainsi qu'il n'a pas été lancé. $1 = la suite du contrôle (sh), où « $w » est $work.
+controle() {
+  mkdir -p "$depot/scripts"
+  {
+    printf '#!/bin/sh\nw=%q\n' "$work"
+    # shellcheck disable=SC2016 # contrôle écrit sur le disque : son « $w » s'y développe à l'exécution
+    printf 'pwd > "$w/controle-lance"\n%s\n' "$1"
+  } > "$depot/scripts/check.sh"
+  chmod +x "$depot/scripts/check.sh"
+}
+
+# Le workflow de CI nommé n'existe pas sur la base : c'est la condition de la règle d'amorçage.
+readonly sans_ci=ci.workflow=.gitea/workflows/absent.yaml
+
+# La forge nominale, mais sans aucun statut de CI sur la tête.
+forge_amorcage() {
+  forge_prete
+  api GET "/repos/$repo/commits/$(tete)/status" '{"state":"","statuses":[]}'
+}
+
+# L'audit, le dépôt d'origine du sous-module mis hors d'atteinte : la copie ne peut être peuplée que
+# depuis le sous-module du dépôt de travail, jamais en clonant l'URL de .gitmodules.
+verifie_amorcage() {
+  [[ ! -d $work/commun ]] || mv "$work/commun" "$work/commun-hors-d-atteinte"
+  verifie "$pr"
+}
+
+# La copie part avec l'audit, sous-modules compris : « git worktree add » range le dépôt d'un
+# sous-module initialisé dans la copie sous .git/worktrees/<copie>/modules du dépôt de travail.
+copie_retiree() {
+  [[ ! -d $depot/.git/worktrees || -z $(ls -A "$depot/.git/worktrees") ]] \
+    || { printf 'la copie de la tête est restée dans le dépôt de travail :\n%s\n' "$(ls -A "$depot/.git/worktrees")" >&2; exit 1; }
+}
+
+# Un refus du substitut faute de pouvoir construire une copie complète : code 2, le message attendu,
+# le contrôle jamais lancé, rien écrit sur la forge, la copie retirée. $1 = le message attendu.
+amorcage_refuse() {
+  verifie_amorcage
+  assert_eq 2 "$rc" "copie complète impossible : l'audit ne peut pas conclure (messages : $err)"
+  assert_contains "$1" "$err" "le message nomme la cause"
+  [[ ! -e $work/controle-lance ]] || { echo "le contrôle a été lancé sur une copie incomplète" >&2; exit 1; }
+  aucune_ecriture
+  copie_retiree
+}
+
+# Le contrôle de la forme d'un projet consommateur : il exige le sous-module, et refuse en 2 sinon.
+# Il note aussi ce que git répond dans le sous-module : la racine du sous-module, à son commit.
+# shellcheck disable=SC2016 # contrôle écrit sur le disque : son « $w » s'y développe à l'exécution
+readonly controle_qui_exige_le_sous_module='[ -f commun/outil.sh ] || { echo "mécanisme des contrôles absent : sous-module non initialisé"; exit 2; }
+git -C commun rev-parse --show-prefix HEAD > "$w/vu-par-git"'
+
+case_amorcage_substitut_sans_sous_module() {
+  # contre-épreuve : sans sous-module, le substitut tourne dans la copie et le verrou rend « absent »
+  controle 'exit 0'
+  projet "$sans_ci"
+  forge_amorcage
+  verifie_amorcage
+  assert_eq 0 "$rc" "le substitut réussit (messages : $err)"
+  verrou absent "CI"
+  assert_contains "règle d'amorçage, substitut réussi (garde-fou (verrou 3), scripts/check.sh sur la tête)" "$out" "le substitut est nommé"
+  [[ -f $work/controle-lance ]] || { echo "le contrôle n'a pas été lancé" >&2; exit 1; }
+  [[ $(cat "$work/controle-lance") != "$depot" ]] || { echo "le contrôle a tourné dans le dépôt de travail" >&2; exit 1; }
+  aucune_ecriture
+  copie_retiree
+}
+
+case_amorcage_controle_voit_le_sous_module() {
+  # La forme « passe à tort » : le contrôle refuse un motif dans les fichiers du sous-module, sans en
+  # vérifier la présence. La version montée par la PR porte ce motif (« outil v2 ») : sur un dossier
+  # vide, il ne trouverait rien à refuser, et le substitut réussirait sans avoir rien vu.
+  # shellcheck disable=SC2016 # contrôle écrit sur le disque : ses « $ » s'y développent à l'exécution
+  controle 'find commun -path commun/.git -prune -o -type f -print | LC_ALL=C sort > "$w/vu"
+for f in $(cat "$w/vu"); do
+  if grep -q "outil v2" "$f"; then echo "motif refusé dans $f"; exit 1; fi
+done'
+  projet_avec_sous_module "$sans_ci"
+  forge_amorcage
+  verifie_amorcage
+  assert_eq 1 "$rc" "le motif refusé dans le sous-module bloque (messages : $err)"
+  assert_eq "commun/outil.sh" "$(cat "$work/vu")" "le contrôle voit le fichier du sous-module"
+  verrou bloque "CI"
+  assert_contains "motif refusé dans commun/outil.sh" "$out" "la sortie du contrôle est rendue"
+  aucune_ecriture
+  copie_retiree
+}
+
+case_amorcage_controle_qui_exige_le_sous_module() {
+  # La forme qui bloquait à tort : le contrôle exige le sous-module et refuse en 2 s'il manque. Dans
+  # la copie, git doit répondre pour le sous-module lui-même, au commit que la tête épingle.
+  controle "$controle_qui_exige_le_sous_module"
+  projet_avec_sous_module "$sans_ci"
+  forge_amorcage
+  verifie_amorcage
+  assert_eq 0 "$rc" "le substitut réussit (messages : $err ; sortie : $out)"
+  verrou absent "CI"
+  assert_eq "$(printf '\n%s' "$(git -C "$depot" rev-parse "$branche:commun")")" "$(cat "$work/vu-par-git")" \
+    "dans la copie, git répond pour le sous-module, au commit de la tête"
+  aucune_ecriture
+  copie_retiree
+}
+
+case_amorcage_sous_module_non_initialise() {
+  controle "$controle_qui_exige_le_sous_module"
+  projet_avec_sous_module "$sans_ci"
+  forge_amorcage
+  sous_module_vide
+  ! git -C "$depot" cat-file -e "$(git -C "$depot" rev-parse "$branche:commun")^{commit}" 2>/dev/null \
+    || { echo "préparation : le dépôt parent a déjà le commit du sous-module" >&2; exit 1; }
+  amorcage_refuse "sous-module commun non initialisé (son dossier relève du dépôt parent) : « git submodule update --init »"
+}
+
+case_amorcage_sous_module_vide_et_commit_dans_le_parent() {
+  # le dépôt parent a le commit du sous-module : « git -C <dossier vide> » le trouve. Seule la garde
+  # « --show-prefix » voit que git a répondu pour le parent.
+  controle "$controle_qui_exige_le_sous_module"
+  projet_avec_sous_module "$sans_ci"
+  forge_amorcage
+  sous_module_vide
+  git -C "$depot" -c protocol.file.allow=always fetch -q "$work/commun" HEAD
+  git -C "$depot" cat-file -e "$(git -C "$depot" rev-parse "$branche:commun")^{commit}" \
+    || { echo "préparation : le dépôt parent n'a pas le commit du sous-module" >&2; exit 1; }
+  amorcage_refuse "sous-module commun non initialisé (son dossier relève du dépôt parent)"
+}
+
+case_amorcage_sous_module_illisible() {
+  controle "$controle_qui_exige_le_sous_module"
+  projet_avec_sous_module "$sans_ci"
+  forge_amorcage
+  sous_module_vide
+  printf 'gitdir: %s\n' "$work/nulle-part" > "$depot/commun/.git"
+  amorcage_refuse "sous-module commun non initialisé (git ne le lit pas)"
+}
+
+case_amorcage_sous_module_sans_le_commit() {
+  controle "$controle_qui_exige_le_sous_module"
+  projet_avec_sous_module "$sans_ci"
+  forge_amorcage
+  local v1 epingle
+  epingle=$(git -C "$depot" rev-parse "$branche:commun")
+  v1=$(git -C "$depot/commun" rev-parse HEAD~1)
+  git -C "$depot/commun" checkout -q "$v1"
+  git -C "$depot/commun" for-each-ref --format='%(refname)' | while read -r ref; do
+    git -C "$depot/commun" update-ref -d "$ref"
+  done
+  git -C "$depot/commun" reflog expire --expire=now --all
+  git -C "$depot/commun" gc -q --prune=now
+  ! git -C "$depot/commun" cat-file -e "$epingle^{commit}" 2>/dev/null \
+    || { echo "préparation : le commit épinglé est encore là" >&2; exit 1; }
+  amorcage_refuse "sous-module commun sans le commit ${epingle:0:7} de la tête"
+}
+
+case_amorcage_sous_module_imbrique() {
+  # le commit épinglé contient lui-même un sous-module : le substitut ne peuple pas les sous-modules
+  # imbriqués, et le dit, plutôt que de lancer le contrôle sur une copie où l'un d'eux serait vide
+  controle "$controle_qui_exige_le_sous_module"
+  projet_avec_sous_module "$sans_ci"
+  git -C "$work/commun" update-index --add --cacheinfo "160000,$(git -C "$work/commun" rev-parse HEAD),imbrique"
+  git -C "$work/commun" commit -q -m "un sous-module imbriqué"
+  git -C "$depot/commun" -c protocol.file.allow=always fetch -q origin
+  git -C "$depot/commun" checkout -q "$(git -C "$work/commun" rev-parse HEAD)"
+  git -C "$depot" checkout -q "$branche"
+  git -C "$depot" add commun
+  git -C "$depot" commit -q -m "chore: monte le sous-module imbriquant"
+  git -C "$depot" push -q -f "$nu" "$branche"
+  git -C "$depot" checkout -q dev
+  forge_amorcage
+  amorcage_refuse "sous-module commun contient lui-même un sous-module (imbrique)"
+}
+
+case_amorcage_sous_module_absent_de_gitmodules() {
+  # un sous-module sans entrée dans le .gitmodules de la tête : rien ne dit où le peupler
+  controle "$controle_qui_exige_le_sous_module"
+  projet_avec_sous_module "$sans_ci"
+  git -C "$depot" checkout -q "$branche"
+  git -C "$depot" config -f .gitmodules --remove-section submodule.commun
+  git -C "$depot" add .gitmodules
+  git -C "$depot" commit -q -m "chore: retire l'entrée du sous-module"
+  git -C "$depot" push -q -f "$nu" "$branche"
+  git -C "$depot" checkout -q dev
+  forge_amorcage
+  amorcage_refuse "sous-module commun absent du .gitmodules de la tête"
+}
+
+case_amorcage_gitmodules_illisible() {
+  controle "$controle_qui_exige_le_sous_module"
+  projet_avec_sous_module "$sans_ci"
+  forge_amorcage
+  # code 128, celui d'une lecture impossible : le code 1 de git config veut dire « aucune entrée »
+  faux_qui_echoue git 'config' '--blob' 128
+  amorcage_refuse "lecture du .gitmodules de la tête impossible"
+}
+
+case_amorcage_arbre_de_la_tete_illisible() {
+  controle "$controle_qui_exige_le_sous_module"
+  projet_avec_sous_module "$sans_ci"
+  forge_amorcage
+  faux_qui_echoue git '^ls-tree ' '-z'
+  amorcage_refuse "lecture de l'arbre de la tête impossible"
+}
+
+case_amorcage_arbre_du_sous_module_illisible() {
+  controle "$controle_qui_exige_le_sous_module"
+  projet_avec_sous_module "$sans_ci"
+  forge_amorcage
+  faux_qui_echoue git '/commun ' 'ls-tree'
+  amorcage_refuse "lecture de l'arbre du sous-module commun impossible"
+}
+
+case_amorcage_copie_impossible() {
+  controle "$controle_qui_exige_le_sous_module"
+  projet_avec_sous_module "$sans_ci"
+  forge_amorcage
+  faux_qui_echoue git 'worktree' ' add '
+  amorcage_refuse "création de la copie de la tête impossible"
+}
+
+case_amorcage_peuplement_impossible() {
+  controle "$controle_qui_exige_le_sous_module"
+  projet_avec_sous_module "$sans_ci"
+  forge_amorcage
+  faux_qui_echoue git 'submodule' 'update'
+  amorcage_refuse "peuplement du sous-module commun dans la copie impossible"
+}
+
+case_amorcage_peuplement_sans_effet() {
+  # ceinture : un « submodule update » qui rend 0 sans rien extraire (un réglage qui le neutraliserait,
+  # par exemple) laisserait le dossier vide. Le faux git rend 0 sans rien faire.
+  controle "$controle_qui_exige_le_sous_module"
+  projet_avec_sous_module "$sans_ci"
+  forge_amorcage
+  {
+    printf '#!/usr/bin/env bash\nvrai=%q\n' "$(command -v git)"
+    # shellcheck disable=SC2016 # faux git écrit sur le disque : ses « $ » s'y développent à l'exécution
+    printf '[[ "$*" == *" submodule update "* ]] && exit 0\nexec "$vrai" "$@"\n'
+  } > "$work/bin/git"
+  chmod +x "$work/bin/git"
+  amorcage_refuse "sous-module commun absent de la copie au commit $(git -C "$depot" rev-parse --short=7 "$branche:commun")"
 }
 
 run_case "$@"
