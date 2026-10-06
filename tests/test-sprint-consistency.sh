@@ -287,12 +287,186 @@ case_sprint_desactive_le_dit() {
   assert_eq 2 "$rc" "--merge sans suivi n'a pas de réponse"
 }
 
-case_sprint_convention_keyed_pas_encore_servie() {
-  depot_avec
-  write_workflow_config "$work/depot" sprint.convention=keyed
+# --- convention keyed (calculette#outillage-5) : les règles reprises du contrôle d'origine -----------
+
+readonly art=_bmad-output/implementation-artifacts
+
+# Suivi keyed cohérent, à la forme du suivi d'origine : bloc aliases:, epics nommés,
+# rétrospective « optional », commentaires de fin de ligne, une entrée sans fichier (admise en keyed),
+# des en-têtes de forme ancienne, et deux fichiers qui ne sont pas des stories.
+depot_keyed() {
+  new_repo
+  mkdir -p "$work/depot/$art"
+  cat > "$work/depot/$art/sprint-status.yaml" <<'YAML'
+generated: 2026-07-06T10:30:00
+aliases:
+  court: fix-long-nom
+development_status:
+  epic-outillage: in-progress  # un commentaire
+  fix-long-nom: review
+  feat-direct: done
+  chore-sans-fichier: done
+  epic-outillage-retrospective: optional
+YAML
+  printf '# Court\n\nStatus: review  # en revue\n' > "$work/depot/$art/court.md"
+  printf "# Direct\n\nstatus: 'done'\n" > "$work/depot/$art/feat-direct.md"
+  printf '# Travail reporté\n' > "$work/depot/$art/deferred-work.md"
+  printf "status: 'planning'\n" > "$work/depot/$art/spec-ancienne.md"
+  write_workflow_config "$work/depot" workflow.schema=4 sprint.convention=keyed "sprint.non-story-files=deferred-work spec-*"
+}
+
+suivi_keyed() { printf '%s\n' "$1" >> "$work/depot/$art/sprint-status.yaml"; }
+
+case_sprint_keyed_coherent() {
+  depot_keyed
   run controle
-  assert_eq 2 "$rc" "keyed sort en 2 plutôt que d'être lue comme numbered"
-  assert_contains "story 5" "$err" "le message nomme la story qui l'apportera"
+  assert_eq 0 "$rc" "le suivi keyed cohérent passe (messages : $err$out)"
+  assert_contains "cohérent dans l'arbre de travail (3 stories, 1 epics, 2 fichiers de story, 1 alias, 0 question(s) ouverte(s))" "$out" "les comptes"
+}
+
+case_sprint_keyed_lit_un_commit() {
+  depot_keyed
+  local sha
+  sha=$(commit_all "suivi")
+  printf 'Status: done\n' > "$work/depot/$art/court.md"
+  run controle
+  assert_eq 1 "$rc" "l'arbre de travail diverge"
+  run controle --rev "$sha"
+  assert_eq 0 "$rc" "le commit est cohérent (messages : $err$out)"
+  assert_contains "dans le commit ${sha:0:7}" "$out" "le commit est nommé"
+}
+
+case_sprint_keyed_sous_dossier_ignore_dans_les_deux_lectures() {
+  # Seuls les fichiers du dossier des stories comptent, pas ceux d'un sous-dossier : dans l'arbre de
+  # travail (joker du shell) comme dans un commit (git ls-tree, sans -r, ne descend pas).
+  depot_keyed
+  mkdir -p "$work/depot/$art/archives"
+  printf 'Status: done\n' > "$work/depot/$art/archives/vieille-story.md"
+  local sha
+  sha=$(commit_all "suivi")
+  run controle
+  assert_eq 0 "$rc" "arbre de travail : le sous-dossier est ignoré (messages : $err$out)"
+  run controle --rev "$sha"
+  assert_eq 0 "$rc" "commit : le sous-dossier est ignoré aussi (messages : $err$out)"
+  assert_contains "2 fichiers de story" "$out" "même compte dans les deux lectures"
+}
+
+ecart_keyed() { # $1 message attendu ; le contrôle refuse en 1
+  run controle
+  assert_eq 1 "$rc" "écart constaté (messages : $err$out)"
+  assert_contains "$1" "$out" "l'écart est nommé"
+}
+
+case_sprint_keyed_orphelin() {
+  depot_keyed
+  printf 'Status: done\n' > "$work/depot/$art/feat-oubliee.md"
+  ecart_keyed "feat-oubliee.md — aucune entrée dans le suivi (ni directe, ni par alias)"
+}
+
+case_sprint_keyed_sans_liste_tout_md_est_une_story() {
+  depot_keyed
+  write_workflow_config "$work/depot" workflow.schema=4 sprint.convention=keyed sprint.non-story-files=none
+  ecart_keyed "spec-ancienne.md — aucune entrée dans le suivi"
+}
+
+case_sprint_keyed_en_tete_divergent() {
+  depot_keyed
+  printf 'Status: done\n' > "$work/depot/$art/court.md"
+  ecart_keyed "court.md — en-tête « done », suivi « review » (clé : fix-long-nom)"
+}
+
+case_sprint_keyed_en_tete_absent_ou_hors_vocabulaire() {
+  depot_keyed
+  printf '# Court\n' > "$work/depot/$art/court.md"
+  ecart_keyed "court.md — aucun en-tête « Status: » lisible"
+  printf 'Status: termine\n' > "$work/depot/$art/court.md"
+  ecart_keyed "court.md — en-tête « termine » n'est pas un statut de story"
+}
+
+case_sprint_keyed_alias_sans_cible() {
+  depot_keyed
+  sed -i 's/^  court: fix-long-nom$/  court: fix-long-nom\n  perime: fix-disparu/' "$work/depot/$art/sprint-status.yaml"
+  ecart_keyed "alias sans cible : perime → fix-disparu (clé absente de development_status)"
+}
+
+case_sprint_keyed_rattachement_ambigu() {
+  depot_keyed
+  sed -i 's/^  court: fix-long-nom$/  court: fix-long-nom\n  feat-direct: fix-long-nom/' "$work/depot/$art/sprint-status.yaml"
+  ecart_keyed "feat-direct.md — clé directe ET alias : rattachement ambigu"
+}
+
+case_sprint_keyed_statuts_hors_vocabulaire() {
+  depot_keyed
+  suivi_keyed '  epic-autre: finie
+  epic-autre-retrospective: backlog
+  fix-autre: draft'
+  run controle
+  assert_eq 1 "$rc" "trois statuts hors vocabulaire"
+  assert_contains "statut d'epic invalide : epic-autre = « finie »" "$out" "l'epic"
+  assert_contains "statut de rétrospective invalide : epic-autre-retrospective = « backlog »" "$out" "la rétrospective"
+  assert_contains "statut de story invalide : fix-autre = « draft »" "$out" "la story"
+}
+
+case_sprint_keyed_epic_non_derive_des_stories() {
+  # En keyed, rien ne relie une story à son epic : le statut d'un epic n'est vérifié que contre le
+  # vocabulaire. Un epic « backlog » dont des stories sont « done » n'est pas un écart.
+  depot_keyed
+  sed -i 's/^  epic-outillage: in-progress.*/  epic-outillage: backlog/' "$work/depot/$art/sprint-status.yaml"
+  run controle
+  assert_eq 0 "$rc" "aucun écart d'epic en keyed (messages : $err$out)"
+}
+
+case_sprint_keyed_merge() {
+  depot_keyed
+  run controle --merge feat-direct
+  assert_eq 0 "$rc" "story à done des deux côtés (messages : $err$out)"
+  assert_contains "story feat-direct à done, fusion admise" "$out" "la story est nommée"
+  run controle --merge fix-long-nom
+  assert_eq 1 "$rc" "story à review"
+  assert_contains "story fix-long-nom à review dans le suivi : fusion refusée" "$out" "la raison"
+  run controle --merge feat-inconnue
+  assert_eq 1 "$rc" "story absente"
+  assert_contains "story feat-inconnue absente du suivi : fusion refusée" "$out" "la raison"
+  run controle --merge chore-sans-fichier
+  assert_eq 1 "$rc" "story à done sans fichier"
+  assert_contains "story chore-sans-fichier sans fichier de story : fusion refusée" "$out" "la raison"
+}
+
+case_sprint_keyed_merge_par_alias() {
+  depot_keyed
+  sed -i 's/^  fix-long-nom: review$/  fix-long-nom: done/' "$work/depot/$art/sprint-status.yaml"
+  printf 'Status: done\n' > "$work/depot/$art/court.md"
+  run controle --merge fix-long-nom
+  assert_eq 0 "$rc" "la story est à done dans le fichier qui porte l'alias (messages : $err$out)"
+}
+
+case_sprint_merge_selon_la_convention() {
+  depot_keyed
+  run controle --merge 0.1
+  assert_eq 2 "$rc" "un numéro n'est pas une clé keyed"
+  assert_contains "clé de story attendue après --merge" "$err" "le message dit quoi passer"
+  depot_avec
+  run controle --merge feat-direct
+  assert_eq 2 "$rc" "une clé n'est pas un numéro numbered"
+  assert_contains "numéro de story attendu après --merge" "$err" "le message dit quoi passer"
+}
+
+case_sprint_keyed_suivi_absent() {
+  depot_keyed
+  rm "$work/depot/$art/sprint-status.yaml"
+  run controle
+  assert_eq 2 "$rc" "sans suivi, aucune conclusion"
+  assert_contains "absent" "$err" "le contrôle le dit"
+}
+
+case_sprint_keyed_liste_illisible() {
+  skip_if_root "le dossier des stories"
+  depot_keyed
+  chmod 311 "$work/depot/$art" # le suivi reste lisible, la liste du dossier ne l est plus
+  run controle
+  chmod 755 "$work/depot/$art"
+  assert_eq 2 "$rc" "dossier illisible : aucune conclusion"
+  assert_contains "lecture de la liste des fichiers de story impossible" "$err" "et le contrôle le dit"
 }
 
 case_sprint_sans_workflow_config() {

@@ -63,7 +63,6 @@ if [[ -n $out_file ]]; then
   # suite perdrait un rapport précédent si elle échoue en route (constat de la revue de la PR n° 56).
   touch "$out_file" || die "fichier de sortie impossible à écrire : $out_file."
 fi
-[[ -z $story || $story =~ ^[0-9]+\.[0-9]+[a-z]?$ ]] || die "numéro de story attendu, par exemple 0.6."
 if [[ -n $context_file ]]; then
   [[ $context_file == /* ]] || context_file="$PWD/$context_file"
   [[ -s $context_file ]] || die "fichier de contexte absent ou vide : $context_file."
@@ -108,6 +107,11 @@ fi
 rc=0
 convention_reason=$(sprint_convention_served "$convention") || rc=$?
 ((rc != 2)) || die "$convention_reason"
+# La revue de spec lit la section « ### Story n.m » de sprint.spec-source : une story keyed n'a pas de
+# numéro, et sa spec est son propre fichier — revue que la story calculette#outillage-9 apportera.
+[[ -z $story || $convention != keyed ]] \
+  || die "revue de spec non servie pour la convention keyed (sprint.convention = keyed) : à venir (calculette#outillage-9)."
+[[ -z $story || $story =~ ^[0-9]+\.[0-9]+[a-z]?$ ]] || die "numéro de story attendu, par exemple 0.6."
 if [[ -n $story && $epics_file == none ]]; then
   die "revue de spec désactivée (sprint.spec-source = none) : aucun texte de story à relire."
 fi
@@ -172,7 +176,7 @@ if [[ -n $context_file ]] && contains_private "$context_file"; then
 fi
 
 # --- ce qui est relu -------------------------------------------------------------------------
-base="" branch="" base_sha="" head_sha="" story_num=""
+base="" branch="" base_sha="" head_sha="" story_num="" story_key="" story_basename=""
 if [[ -n $pr ]]; then
   load_gitea_env "$root/$forge_env_file"
   check_token_owner "$tmp/user.json"
@@ -201,7 +205,24 @@ if [[ -n $pr ]]; then
   template="$script_dir/prompts/code.md"
   audit_range=("$base_sha..$head_sha")
   story_num=""
-  [[ $convention == none ]] || story_num=$(story_number_from_branch "$branch") || story_num=""
+  if [[ $convention == keyed ]]; then
+    # la clé que le nom de branche désigne, directement ou par alias ; aucune : pas de story. Un suivi
+    # absent de l'arbre de travail (PR qui l'ajoute) n'a pas de story à donner : il n'est pas lu, et
+    # aucune erreur de redirection n'est prise pour « aucune story ».
+    rc=1
+    if [[ -f $root/$status_file ]]; then
+      rc=0
+      story_ref=$(sprint_keyed_story_from_branch "$branch" < "$root/$status_file") || rc=$?
+    fi
+    ((rc != 2)) || die "story de la branche $branch ambiguë dans le suivi de sprint (deux clés, ou clé directe et alias) ou suivi illisible."
+    if ((rc == 0)); then
+      story_key=${story_ref%%$'\t'*}
+      story_basename=${story_ref#*$'\t'}
+      story_num=$story_key
+    fi
+  elif [[ $convention != none ]]; then
+    story_num=$(story_number_from_branch "$branch") || story_num=""
+  fi
 elif [[ -n $range ]]; then
   # Une plage déjà dans le dépôt : rien n'est lu sur la forge, et le relecteur voit le dépôt au
   # commit de fin. « A^..B » et « A..B » sont acceptés tels quels — c'est l'appelant qui sait s'il
@@ -227,8 +248,7 @@ else
 fi
 [[ -s $template ]] || die "consigne absente du dépôt commun : ${template#"$script_dir"/}."
 
-story_key=""
-if [[ -n $story_num ]]; then
+if [[ -n $story_num && $convention != keyed ]]; then
   rc=0
   story_key=$(sprint_story_key "$story_num" < "$root/$status_file") || rc=$?
   ((rc != 2)) || die "story $story_num ambiguë dans le suivi de sprint (plusieurs clés) ou suivi illisible."
@@ -457,7 +477,7 @@ else
 fi
 
 story_file=""
-[[ -z $story_key ]] || story_file="$root/$stories_dir/$story_key.md"
+[[ -z $story_key ]] || story_file="$root/$stories_dir/${story_basename:-$story_key}.md"
 current_branch=$(git symbolic-ref --quiet --short HEAD || true)
 if [[ -z $story_file ]]; then
   printf '%s: aucune story associée : fichier de story non mis à jour.\n' "$script_name" >&2

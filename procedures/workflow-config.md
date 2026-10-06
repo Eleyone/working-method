@@ -37,17 +37,19 @@ avec le nom de chaque champ fautif et la raison, et l'outil sort en **code `2`**
 et l'outil qui la porte **le dit** dans sa sortie (« désactivé (… = none) ») — il ne la rend jamais
 verte en silence. Sur un champ non désactivable, `none` est une erreur de type.
 
-## Les champs — schéma 3
+## Les champs — schémas 3 et 4
 
-Le lecteur ne lit que le schéma **3** (« Changer de schéma », ci-dessous). Par rapport au schéma 2, il
-remplace les deux relecteurs nommés, `review.reviewer-for-claude` et `review.reviewer-for-gemini`, par
-la **table** `review.reviewers`, ouverte à tout fournisseur. Le schéma 2 avait ajouté au 1 les trois
-champs `bmad.project-name`, `bmad.document-output-language` et `bmad.output-folder`, dont `bin/install`
-génère la configuration BMAD du projet.
+Le lecteur lit les schémas **3** et **4** (« Changer de schéma », ci-dessous). Le schéma 4 ajoute au 3 un
+seul champ, `sprint.non-story-files`, qu'exige la convention `keyed` : un projet `numbered` reste au
+schéma 3 sans rien changer. Par rapport au schéma 2, le 3 remplace les deux relecteurs nommés,
+`review.reviewer-for-claude` et `review.reviewer-for-gemini`, par la **table** `review.reviewers`,
+ouverte à tout fournisseur. Le schéma 2 avait ajouté au 1 les trois champs `bmad.project-name`,
+`bmad.document-output-language` et `bmad.output-folder`, dont `bin/install` génère la configuration
+BMAD du projet.
 
 | Champ | Type | Désactivable | Lu par |
 |---|---|---|---|
-| `workflow.schema` | `3` | non | tous |
+| `workflow.schema` | `3` \| `4` | non | tous |
 | `forge.repo` | `propriétaire/nom` | non | `gitea/gitea.sh` : dépôt distant vérifié, appels à l'API |
 | `forge.base` | branche (`git check-ref-format --branch`) | non | `create-pull-request`, `verify-and-merge-pr`, `llm-review` |
 | `forge.release-branch` | branche, différente de la base | **oui** | refus des PR vers elle (`create-pull-request`, `verify-and-merge-pr`) |
@@ -57,6 +59,7 @@ génère la configuration BMAD du projet.
 | `sprint.status-file` | chemin | avec `sprint.convention` | idem |
 | `sprint.stories-dir` | chemin | avec `sprint.convention` | idem |
 | `sprint.spec-source` | chemin | **oui** | `llm-review --story` |
+| `sprint.non-story-files` *(schéma 4)* | motifs de noms (ci-dessous) | **oui** ; `none` hors de `keyed` | `sprint-consistency` en `keyed` : fichiers `.md` du dossier des stories qui ne sont pas des stories |
 | `review.exempt-paths` | expression régulière étendue, appliquée à **chaque** chemin modifié | **oui** | `verify-and-merge-pr`, verrou de revue |
 | `review.report` | `pr-comment` \| `file` | non | `llm-review`, `verify-and-merge-pr` |
 | `review.reviewers` *(schéma 3)* | table : entrées `auteur=modèle` séparées par une espace (ci-dessous) | non | `llm-review` : relecteur du fournisseur de l'auteur |
@@ -79,6 +82,11 @@ génère la configuration BMAD du projet.
 | `bmad.output-folder` | chemin | non | `bin/install` : `output_folder`, et les dossiers d'artefacts qui en dérivent |
 | `agents.skill-dirs` | chemins séparés par une espace | non | `bin/install` |
 | `module.<nom>.<clé>` *(optionnel)* | valeur du modèle du module (ci-dessous) | — | `bin/install` : surcharge de la configuration générée du module |
+
+Un **motif de nom** (`sprint.non-story-files`) se compare au nom d'un fichier du dossier des stories, sans
+`.md`, avec les jokers `*` et `?` du shell : lettres, chiffres, `.`, `_`, `-`, `*` et `?`, ni `/`, ni
+crochet, ni `.md`, ni point en tête ; plusieurs motifs se séparent par une espace, sans doublon. Exemple
+d'origine (`calculette#outillage-5`) : `deferred-work spec-* spike-* *retro* *-prompt`.
 
 Un **libellé** est recopié tel quel, sans citation, dans un fichier TOML et dans une valeur YAML
 générés : ni espace en tête ou en fin, ni caractère de contrôle, ni aucun de `"`, `\`, `'`,
@@ -143,17 +151,21 @@ projet qui en veut d'autres les **surcharge** :
 - `guard.patterns-file = none` exige `guard.command = none` : un garde-fou sans motif ne garde rien.
 - `ci.workflow` et `ci.status-context` valent `none` ensemble, ou portent une valeur ensemble.
 - `forge.release-branch` diffère de `forge.base`.
+- `sprint.convention = keyed` exige le schéma 4 ; au schéma 4, `sprint.non-story-files` vaut `none` dans
+  toute autre convention.
 
 ### Valeurs posées pour la suite
 
-Deux valeurs sont au schéma pour qu'il ne change pas sous les projets, mais l'outillage ne sait pas
-encore les servir. Un outil qui les rencontre sort en `2` en nommant la story qui les apportera —
-jamais un repli silencieux :
+Une valeur est au schéma pour qu'il ne change pas sous les projets, mais l'outillage ne sait pas encore
+la servir. Un outil qui la rencontre sort en `2` en nommant la story qui l'apportera — jamais un repli
+silencieux :
 
 | Valeur | Story |
 |---|---|
-| `sprint.convention = keyed` (clés en kebab-case, bloc `aliases:`) | 5 |
 | `review.report = file` (rapport versionné plutôt que commentaire de PR) | 8 |
+
+`sprint.convention = keyed` (clés en kebab-case, bloc `aliases:`) est servie depuis
+`calculette#outillage-5` : `procedures/sprint-consistency.md`.
 
 ## Pièges de la syntaxe
 
@@ -183,7 +195,9 @@ Un champ ajouté, retiré ou retypé change de schéma : `workflow.schema` augme
 le sien dans sa PR de montée du sous-module. Un fichier d'un schéma que le lecteur ne connaît pas est
 refusé, jamais lu « au mieux ».
 
-En règle générale, le lecteur apprend l'ancien schéma et le nouveau : c'est ce qu'il a fait du 1 au 2.
+En règle générale, le lecteur apprend l'ancien schéma et le nouveau : c'est ce qu'il a fait du 1 au 2, et
+du 3 au 4. Le 4 n'ajoute qu'un champ, que seule la convention `keyed` lit : un projet `numbered` garde son
+fichier au schéma 3, ou monte au 4 en ajoutant `non-story-files = none` à sa section `[sprint]`.
 ⛔ **Le schéma 3 fait exception** : les schémas 1 et 2 portent `review.reviewer-for-claude` et
 `review.reviewer-for-gemini`, que plus aucun outil ne lit. Les lire encore, ce serait accepter un
 fichier dont les relecteurs déclarés sont ignorés en silence. Un fichier au schéma 1 ou 2 est donc

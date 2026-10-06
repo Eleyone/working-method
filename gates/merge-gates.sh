@@ -11,8 +11,10 @@
 #   read_timeline_reports <fonction> <compte> <taille> <plafond> <sortie>
 #                                                      rapports de toutes les pages : 0 lus, 2 page illisible, 3 plafond atteint
 #   last_report <rapports> <SHA> <base>                dernier rapport pour ce SHA et cette base, champs comparés à l'identique
-#   status_commit_ok <SHA relu> <SHA de tête> <clé> <suivi> <dossier des stories>
-#                                                      règle du commit de statut : 0 respectée, 1 sinon, avec la raison
+#   status_commit_ok <SHA relu> <SHA de tête> <clé> <suivi> <dossier des stories> <convention> <fichier de story>
+#                                                      règle du commit de statut : 0 respectée, 1 sinon, avec la raison ;
+#                                                      <fichier de story> : son nom sans « .md » (la clé en numbered,
+#                                                      le nom qui porte l'alias en keyed)
 #   ci_gate <état CI> <workflow sur la base : 0 ou 1> <chemin du workflow> <contexte>
 #                                                      « passe|bloque|amorçage<TAB>détail » : 0, 2 illisible
 #   review_exemption <expression|none> <fichiers>      exception documentaire : 0 tous les fichiers
@@ -70,6 +72,10 @@ last_report() { # $1 fichier des premières lignes de rapports, $2 SHA, $3 base
 # Le commit de tête, seul après le SHA relu, ne change que les lignes de statut (story review → done,
 # last_updated, epic → done) et n'ajoute par ailleurs que des lignes au fichier de story et à
 # deferred-work.md. Affiche la raison d'un refus.
+#
+# En keyed (calculette#outillage-5), les epics sont nommés (« epic-outillage », jamais une rétrospective)
+# et une ligne de statut peut porter un commentaire de fin de ligne : il reste tel quel, seule la valeur
+# du statut change — chaque ligne ajoutée a sa ligne retirée, au statut près.
 # Lignes d'un texte qui correspondent, ou avec -v ne correspondent pas, à un motif. « Rien trouvé »
 # réussit avec une sortie vide, une erreur échoue. La lecture du code de grep n'est pas écrite ici :
 # elle est commune à tout l'outillage (lib/shell.sh). Cette fonction garde en revanche son
@@ -84,8 +90,13 @@ select_lines() { # $1 options de grep (-E, -vE, -xF…), $2 motif, $3 texte
 
 # Les noms locaux sont préfixés : un script appelant déclare status_file et stories_dir en readonly, et
 # « local » sur un nom readonly échoue en gardant la valeur du script.
-status_commit_ok() { # $1 SHA relu, $2 SHA de tête, $3 clé de la story, $4 suivi de sprint, $5 dossier des stories
-  local reviewed=$1 head=$2 story_key=$3 rule_status_file=$4 rule_stories_dir=$5 count files f diff_out removed added extra found
+status_commit_ok() { # $1 SHA relu, $2 SHA de tête, $3 clé de la story, $4 suivi de sprint, $5 dossier des stories, $6 convention, $7 fichier de story
+  local reviewed=$1 head=$2 story_key=$3 rule_status_file=$4 rule_stories_dir=$5 rule_convention=${6:-} rule_story_file=${7:-}
+  local count files f diff_out removed added extra found
+  case $rule_convention in
+    numbered|keyed) ;;
+    *) echo "convention « $rule_convention » inconnue de la règle du commit de statut"; return 1 ;;
+  esac
   count=$(git rev-list --count "$reviewed..$head" 2>/dev/null) || { echo "commits après le SHA relu illisibles"; return 1; }
   [[ $count == 1 ]] || { echo "plus d'un commit après le SHA relu"; return 1; }
   [[ -n $story_key ]] || { echo "aucune story associée à la branche"; return 1; }
@@ -98,6 +109,11 @@ status_commit_ok() { # $1 SHA relu, $2 SHA de tête, $3 clé de la story, $4 sui
       || { echo "lecture du diff de $f impossible"; return 1; }
     { added=$(select_lines -E '^\+' "$diff_out") && added=$(select_lines -vE '^\+\+\+( |$)' "$added"); } \
       || { echo "lecture du diff de $f impossible"; return 1; }
+    if [[ $rule_convention == keyed ]]; then
+      status_commit_keyed_file "$f" "$story_key" "$rule_status_file" "$rule_stories_dir" "$rule_story_file" "$removed" "$added" \
+        || return 1
+      continue
+    fi
     case $f in
       "$rule_status_file")
         extra=$(select_lines -vE "^-[[:space:]]+$story_key: review$|^-last_updated: |^-[[:space:]]+epic-[0-9]+: [a-z-]+$" "$removed") \
@@ -123,6 +139,62 @@ status_commit_ok() { # $1 SHA relu, $2 SHA de tête, $3 clé de la story, $4 sui
     esac
   done <<< "$files"
   return 0
+}
+
+# Un fichier du commit de statut, en keyed. $6 et $7 : lignes retirées et ajoutées du diff, en-têtes ôtés.
+status_commit_keyed_file() { # $1 fichier, $2 clé, $3 suivi, $4 dossier des stories, $5 fichier de story, $6 retirées, $7 ajoutées
+  local f=$1 story_key=$2 removed=$6 added=$7 extra found retro removed_norm added_norm suffix
+  local -r comment='( +#.*)?$'
+  local -r epic='epic-[a-z0-9]+(-[a-z0-9]+)*'
+  case $f in
+    "$3")
+      retro=$(select_lines -E "^[-+][[:space:]]+epic-[a-z0-9-]*-retrospective:" "$removed"$'\n'"$added") \
+        || { echo "lecture du diff de $f impossible"; return 1; }
+      [[ -z $retro ]] || { echo "suivi de sprint : une rétrospective change dans le commit de statut"; return 1; }
+      extra=$(select_lines -vE "^-[[:space:]]+$story_key: review$comment|^-last_updated: |^-[[:space:]]+$epic: [a-z-]+$comment" "$removed") \
+        || { echo "lecture du diff de $f impossible"; return 1; }
+      [[ -z $extra ]] || { echo "suivi de sprint : suppression hors des lignes de statut"; return 1; }
+      extra=$(select_lines -vE "^\+[[:space:]]+$story_key: done$comment|^\+last_updated: |^\+[[:space:]]+$epic: done$comment" "$added") \
+        || { echo "lecture du diff de $f impossible"; return 1; }
+      [[ -z $extra ]] || { echo "suivi de sprint : ajout hors des lignes de statut"; return 1; }
+      found=$(select_lines -E "^\+[[:space:]]+$story_key: done$comment" "$added") || { echo "lecture du diff de $f impossible"; return 1; }
+      [[ -n $found ]] || { echo "suivi de sprint : la story ne passe pas à done"; return 1; }
+      # ligne à ligne : chaque ligne de statut ajoutée a sa ligne retirée, au statut près (commentaire compris)
+      { removed_norm=$(select_lines -vE '^-last_updated: ' "$removed") \
+        && added_norm=$(select_lines -vE '^\+last_updated: ' "$added"); } \
+        || { echo "lecture du diff de $f impossible"; return 1; }
+      # sans tube : une fonction de bibliothèque ne compte pas sur pipefail, chaque étape est vérifiée
+      { removed_norm=$(sed -E 's/^-([[:space:]]+[a-z0-9-]+: )[a-z-]+/\1/' <<< "$removed_norm") \
+        && removed_norm=$(LC_ALL=C sort <<< "$removed_norm") \
+        && added_norm=$(sed -E 's/^\+([[:space:]]+[a-z0-9-]+: )[a-z-]+/\1/' <<< "$added_norm") \
+        && added_norm=$(LC_ALL=C sort <<< "$added_norm"); } \
+        || { echo "lecture du diff de $f impossible"; return 1; }
+      [[ $removed_norm == "$added_norm" ]] || { echo "suivi de sprint : une ligne de statut change ailleurs que dans sa valeur (commentaire compris)"; return 1; }
+      ;;
+    "$4/$5.md")
+      # l'en-tête se lit sous les formes qu'admet sprint_keyed_header_status (« Status: », « status: 'x' »,
+      # « **Status**: ») ; à done, il garde sa forme, ou passe à la forme « Status: done » — celle qu'écrit
+      # la clôture du contrôle d'origine —, son commentaire de fin de ligne restant identique
+      local -r header_re="^-(\*{0,2}[Ss]tatus\*{0,2}[[:space:]]*:[[:space:]]*)('review'|\"review\"|review)( +#.*)?$"
+      # une seule ligne retirée : le « . » de [[ =~ ]] traverse les retours à la ligne, et le commentaire
+      # « ( +#.*) » avalerait sinon les lignes retirées qui le suivent
+      [[ $removed != *$'\n'* && $removed =~ $header_re ]] \
+        || { echo "fichier de story : suppression autre que la ligne « Status: review »"; return 1; }
+      local -r prefix=${BASH_REMATCH[1]} quoted=${BASH_REMATCH[2]}
+      suffix=${BASH_REMATCH[3]}
+      found=$(select_lines -xF "+Status: done$suffix" "$added") || { echo "lecture du diff de $f impossible"; return 1; }
+      if [[ -z $found ]]; then
+        found=$(select_lines -xF "+$prefix${quoted//review/done}$suffix" "$added") || { echo "lecture du diff de $f impossible"; return 1; }
+      fi
+      [[ -n $found ]] || { echo "fichier de story : « Status: done » absent, ou son commentaire changé"; return 1; }
+      ;;
+    "$4/deferred-work.md")
+      [[ -z $removed ]] || { echo "deferred-work.md : ligne supprimée ou modifiée"; return 1; }
+      ;;
+    *)
+      echo "fichier $f modifié hors de la règle du commit de statut"; return 1
+      ;;
+  esac
 }
 
 # Une CI qui tourne n'est jamais une CI absente, même pendant l'amorçage. « amorçage » : aucun statut

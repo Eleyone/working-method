@@ -1,4 +1,4 @@
-# workflow.config — ce qui est propre à un projet qui consomme le dépôt commun. Schéma 3.
+# workflow.config — ce qui est propre à un projet qui consomme le dépôt commun. Schéma 4.
 #
 # À la racine du projet, versionné. Format de git config, lu par
 # « git config -f workflow.config --no-includes --null --list ».
@@ -18,8 +18,9 @@
 # Description de chaque champ : procedures/workflow-config.md du dépôt commun.
 
 [workflow]
-	# version du schéma : 3, le seul lu ; un fichier au schéma 1 ou 2 est refusé avec ce qu'il faut changer
-	schema = 3
+	# version du schéma : 3 ou 4 ; le 4 ajoute sprint.non-story-files, qu'exige la convention keyed. Un
+	# fichier au schéma 1 ou 2 est refusé avec ce qu'il faut changer
+	schema = 4
 
 [forge]
 	# dépôt sur la forge, « propriétaire/nom » ; le dépôt distant origin doit être celui-là
@@ -34,7 +35,8 @@
 	env-file = .env
 
 [sprint]
-	# convention du suivi : numbered (clés « n-m-titre »), keyed (story 5), none
+	# convention du suivi : numbered (clés « n-m-titre »), keyed (clés kebab-case et bloc aliases:,
+	# schéma 4), none
 	convention = numbered
 	# suivi de sprint (désactivable avec convention = none)
 	status-file = _bmad-output/implementation-artifacts/sprint-status.yaml
@@ -42,6 +44,10 @@
 	stories-dir = _bmad-output/implementation-artifacts
 	# texte des stories pour la revue de spec, en-têtes « ### Story n.m : » (désactivable)
 	spec-source = _bmad-output/planning-artifacts/epics.md
+	# keyed seulement (schéma 4) : noms des fichiers .md du dossier des stories qui ne sont pas des stories,
+	# motifs à jokers « * » et « ? », sans « .md » (par exemple « deferred-work spec-* ») ; none : tout
+	# fichier .md est une story. Vaut none dans toute autre convention
+	non-story-files = none
 
 [review]
 	# expression régulière étendue : une PR dont CHAQUE fichier correspond est dispensée de revue

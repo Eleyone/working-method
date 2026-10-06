@@ -104,8 +104,24 @@ seule_l_alerte() {
 
 stories=_bmad-output/implementation-artifacts
 
+# La forme du suivi : numbered par défaut ; keyed pour les cas de la convention keyed (calculette#outillage-5),
+# où le fichier 1-2-essai.md porte l'alias de la clé story-essai-longue.
+forme_du_suivi=numbered
+
 suivi() { # $1 statut de la story 1.2 ; écrit le suivi et le fichier de story
   mkdir -p "$depot/$stories"
+  if [[ $forme_du_suivi == keyed ]]; then
+    printf 'last_updated: 2026-10-06\naliases:\n  1-2-essai: story-essai-longue\ndevelopment_status:\n  epic-essai: in-progress  # epic nommé\n  premiere-story: done\n  story-essai-longue: %s  # décision\n  epic-essai-retrospective: optional\n' \
+      "$1" > "$depot/$stories/sprint-status.yaml"
+    printf '# Story essai\n\nStatus: %s\n' "$1" > "$depot/$stories/1-2-essai.md"
+    printf "# Première\n\nstatus: 'done'\n" > "$depot/$stories/premiere-story.md"
+    printf '# Travail reporté\n' > "$depot/$stories/deferred-work.md"
+    if [[ ${suivi_ambigu:-} == 1 ]]; then # une seconde story que le nom de branche désigne aussi
+      printf '  feat-1-2-essai: done\n' >> "$depot/$stories/sprint-status.yaml"
+      printf '# Autre\n\nStatus: done\n' > "$depot/$stories/feat-1-2-essai.md"
+    fi
+    return 0
+  fi
   printf 'last_updated: 2026-10-04\ndevelopment_status:\n  epic-1: in-progress\n  1-1-premiere: done\n  1-2-essai: %s\n  1-3-suivante: backlog\n' \
     "$1" > "$depot/$stories/sprint-status.yaml"
   printf '# Story 1.2\n\nStatus: %s\n' "$1" > "$depot/$stories/1-2-essai.md"
@@ -189,6 +205,56 @@ case_audit_pr_conforme() {
   verrou passe "CI"
   verrou passe "suivi de sprint"
   assert_contains "story 1.2 à done : cohérent" "$out" "la story est lue dans le nom de la branche"
+  aucune_ecriture
+}
+
+readonly keyed_config=(workflow.schema=4 sprint.convention=keyed sprint.non-story-files=deferred-work)
+
+case_audit_pr_keyed_conforme() {
+  forme_du_suivi=keyed
+  projet "${keyed_config[@]}"
+  forge_prete
+  verifie "$pr"
+  assert_eq 0 "$rc" "tous les verrous passent en keyed (messages : $err$out)"
+  verrou passe "revue LLM"
+  verrou passe "suivi de sprint"
+  assert_contains "story story-essai-longue à done : cohérent" "$out" "la story est la clé que l'alias du nom de branche désigne"
+  aucune_ecriture
+}
+
+case_audit_pr_keyed_branche_ambigue() {
+  forme_du_suivi=keyed
+  suivi_ambigu=1
+  projet "${keyed_config[@]}"
+  forge_prete
+  verifie "$pr"
+  assert_eq 1 "$rc" "deux stories pour une branche : le verrou de suivi bloque (messages : $err$out)"
+  verrou bloque "suivi de sprint"
+  assert_contains "désigne plus d'une story du suivi" "$out" "la raison"
+  aucune_ecriture
+}
+
+case_audit_pr_keyed_commit_de_statut_apres_la_revue() {
+  forme_du_suivi=keyed
+  projet "${keyed_config[@]}"
+  git -C "$depot" checkout -q "$branche"
+  suivi review
+  local relu h
+  relu=$(commit_all "relu")
+  suivi "done"
+  commit_all "chore: statut done" > /dev/null
+  git -C "$depot" push -q "$nu" "$branche"
+  git -C "$depot" checkout -q dev
+  forge_prete
+  h=$(tete)
+  api GET "/repos/$repo/issues/$pr/timeline?limit=50&page=1" \
+    "$(jq -nc --arg c "llm-review sha=$relu base=dev model=modele-essai verdict=pass" \
+      '[{type: "comment", user: {login: "compte-essai"}, body: ($c + "\n\nrapport")}]')"
+  api GET "/repos/$repo/commits/$h/status" \
+    '{"state":"success","statuses":[{"context":"checks / checks (pull_request)","status":"success"}]}'
+  verifie "$pr"
+  assert_eq 0 "$rc" "rapport sur le parent, commit de statut keyed conforme (messages : $err$out)"
+  assert_contains "le commit de tête respecte la règle du commit de statut" "$out" "la règle est appliquée"
   aucune_ecriture
 }
 
@@ -788,6 +854,38 @@ sur_la_branche_avec_section() {
   git -C "$depot" checkout -q "$branche"
   printf '\n## Revue du code\n' >> "$depot/$stories/1-2-essai.md"
   cp "$depot/$stories/1-2-essai.md" "$work/story-avant.md"
+}
+
+case_revue_keyed_rapport_ajoute_au_fichier_de_l_alias() {
+  forme_du_suivi=keyed
+  projet_avec_sous_module "${keyed_config[@]}"
+  sur_la_branche_avec_section
+  revue
+  assert_eq 0 "$rc" "la revue est publiée en keyed (messages : $err)"
+  assert_contains "Rien à signaler." "$(cat "$depot/$stories/1-2-essai.md")" "le rapport est dans le fichier qui porte l'alias"
+}
+
+case_revue_keyed_sans_suivi_dans_l_arbre() {
+  # Une PR qui ajoute le suivi : l'arbre de travail n'en a pas encore. Pas de story, et aucune erreur de
+  # redirection ne fuit ni ne passe pour « aucune story ».
+  forme_du_suivi=keyed
+  projet_avec_sous_module "${keyed_config[@]}"
+  git -C "$depot" checkout -q "$branche"
+  rm "$depot/$stories/sprint-status.yaml"
+  revue
+  assert_eq 0 "$rc" "la revue est publiée sans suivi dans l'arbre (messages : $err)"
+  [[ $err != *"No such file"* && $err != *"Aucun fichier"* ]] || { echo "erreur de redirection affichée : $err" >&2; exit 1; }
+  assert_contains "aucune story associée" "$err" "le script dit qu'il n'a pas de story"
+}
+
+case_revue_keyed_branche_ambigue_rend_2() {
+  forme_du_suivi=keyed
+  suivi_ambigu=1
+  projet_avec_sous_module "${keyed_config[@]}"
+  git -C "$depot" checkout -q "$branche"
+  revue
+  assert_eq 2 "$rc" "deux stories pour la branche : la revue ne peut pas conclure"
+  assert_contains "ambiguë dans le suivi de sprint" "$err" "la raison"
 }
 
 case_revue_rapport_ajoute_au_fichier_de_story() {

@@ -89,4 +89,18 @@ case_piege_diff_de_busybox_unifie_par_defaut() {
   done
 }
 
+case_piege_point_de_regex_traverse_les_lignes() {
+  # Le « . » de [[ =~ ]] (expression étendue de la libc, sans REG_NEWLINE) traverse « \n » : ancrée par
+  # ^ et $, une expression qui finit par « .* » accepte une ligne suivie de n'importe quelles autres.
+  local texte=$'-Status: review  # x\n-## une autre ligne retirée'
+  local -r motif='^-Status: review( +#.*)?$'
+  [[ $texte =~ $motif ]] || { echo "constat attendu : le motif accepte les deux lignes" >&2; exit 1; }
+  # Parade : une seule ligne, vérifiée avant la comparaison.
+  if [[ $texte != *$'\n'* && $texte =~ $motif ]]; then
+    echo "parade : deux lignes ne passent plus pour une" >&2; exit 1
+  fi
+  local -r une=$'-Status: review  # x'
+  [[ $une != *$'\n'* && $une =~ $motif ]] || { echo "parade : une ligne seule passe" >&2; exit 1; }
+}
+
 run_case "$@"

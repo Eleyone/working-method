@@ -46,14 +46,22 @@ case_config_incomplete_arrete_chaque_point_d_entree() {
   aucun_appel
 }
 
-case_convention_keyed_pas_encore_servie() {
+case_convention_keyed_exige_le_schema_4() {
   projet sprint.convention=keyed
   lance gates/verify-and-merge-pr.sh 1
-  assert_eq 2 "$rc" "verify-and-merge-pr refuse keyed"
-  assert_contains "story 5" "$err" "en nommant la story qui l'apportera"
+  assert_eq 2 "$rc" "verify-and-merge-pr refuse keyed au schéma 3"
+  assert_contains "« keyed » exige le schéma 4" "$err" "en nommant le schéma"
   lance review/llm-review.sh 1
-  assert_eq 2 "$rc" "llm-review refuse keyed"
-  assert_contains "story 5" "$err" "en nommant la story qui l'apportera"
+  assert_eq 2 "$rc" "llm-review refuse keyed au schéma 3"
+  assert_contains "« keyed » exige le schéma 4" "$err" "en nommant le schéma"
+  aucun_appel
+}
+
+case_revue_de_spec_keyed_non_servie() {
+  projet workflow.schema=4 sprint.convention=keyed sprint.non-story-files=none
+  lance review/llm-review.sh --story fix-essai
+  assert_eq 2 "$rc" "la revue de spec d'une story keyed sort en 2"
+  assert_contains "revue de spec non servie pour la convention keyed" "$err" "et le dit"
   aucun_appel
 }
 

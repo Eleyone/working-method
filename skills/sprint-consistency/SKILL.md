@@ -12,6 +12,6 @@ La procédure fait foi : `.working-method/procedures/sprint-consistency.md`. L'e
 À retenir :
 
 - avant chaque commit de statut : contrôle global, sans option ;
-- avant la fusion d'une PR de story : `--merge <n.m>`, avec `--rev <SHA de tête>` pour lire exactement la tête de la PR ;
+- avant la fusion d'une PR de story : `--merge <n.m>` (convention `keyed` : `--merge <clé>`), avec `--rev <SHA de tête>` pour lire exactement la tête de la PR ;
 - seul le code de sortie `0` vaut cohérence ; un écart se corrige du côté faux (suivi par l'outil de planification, ligne `Status:` du fichier de story), puis on relance ;
 - un projet sans suivi de sprint (`sprint.convention = none`) le dit : le contrôle n'affirme alors aucune cohérence.

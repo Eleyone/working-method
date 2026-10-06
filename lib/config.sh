@@ -37,10 +37,11 @@
 # Procédure : procedures/workflow-config.md
 
 # Le schéma : champ → type. Un « ? » en tête du type marque un champ désactivable par « none ».
-# Seul le schéma 3 est lu (procedures/workflow-config.md, « Changer de schéma ») : il remplace les deux
-# relecteurs nommés des schémas 1 et 2 par la table review.reviewers, ouverte à tout fournisseur. Un
+# Les schémas 3 et 4 sont lus (procedures/workflow-config.md, « Changer de schéma »). Le 3 remplace les
+# deux relecteurs nommés des schémas 1 et 2 par la table review.reviewers, ouverte à tout fournisseur. Un
 # fichier au schéma 1 ou 2 est refusé avec ce qu'il faut changer, jamais lu « au mieux » : il porterait
-# les anciennes clés, que plus aucun outil ne lit.
+# les anciennes clés, que plus aucun outil ne lit. Le 4 ajoute sprint.non-story-files, que la convention
+# keyed exige : un projet numbered reste au 3 sans rien changer.
 declare -gA config_schema=(
   [workflow.schema]=schema
   [forge.repo]=repo
@@ -52,6 +53,7 @@ declare -gA config_schema=(
   [sprint.status-file]=?path
   [sprint.stories-dir]=?path
   [sprint.spec-source]=?path
+  [sprint.non-story-files]=?globs
   [review.exempt-paths]=?regex
   [review.report]=report
   [review.reviewers]=reviewers
@@ -81,6 +83,7 @@ declare -gA config_since_schema=(
   [bmad.document-output-language]=2
   [bmad.output-folder]=2
   [review.reviewers]=3
+  [sprint.non-story-files]=4
 )
 # Les champs retirés, et ce qui les remplace : présents, ils font refuser le fichier avec la nouvelle
 # forme, quel que soit le schéma déclaré — jamais une clé ignorée en silence.
@@ -103,14 +106,14 @@ config_check_type() {
   case $type in
     schema)
       case $value in
-        3) ;;
+        3|4) ;;
         1|2)
           local added=""
           [[ $value == 2 ]] || added=", et bmad.project-name, bmad.document-output-language, bmad.output-folder s'ajoutent"
           echo "schéma $value retiré : le schéma 3 est attendu — review.reviewer-for-claude et review.reviewer-for-gemini y sont remplacés par la table review.reviewers$added (procedures/workflow-config.md, « Changer de schéma »)"
           return 1
           ;;
-        *) echo "schéma « $value » inconnu de cet outillage (schéma lu : 3)"; return 1 ;;
+        *) echo "schéma « $value » inconnu de cet outillage (schémas lus : 3 et 4)"; return 1 ;;
       esac
       ;;
     repo) [[ $value =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "« propriétaire/nom » attendu"; return 1; } ;;
@@ -152,6 +155,23 @@ config_check_type() {
       [[ $value == true || $value == false ]] || { echo "« true » ou « false » attendu"; return 1; }
       ;;
     semver) [[ $value =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version X.Y.Z attendue"; return 1; } ;;
+    globs)
+      # Motifs de noms de fichier, comparés au nom sans « .md » : lettres, chiffres, « . _ - » et les
+      # jokers « * » et « ? ». Ni « / » (un nom, pas un chemin), ni crochet, ni « .md », ni point en tête.
+      [[ $value =~ ^[^[:space:]]+( [^[:space:]]+)*$ ]] \
+        || { echo "liste de motifs attendue, séparés par une espace"; return 1; }
+      # découpage par read, jamais par « for w in $value » : un motif ne s'étend pas aux fichiers du
+      # dossier courant (config_check_unique découpe par le shell : les doublons sont comptés ici)
+      local -a globs=()
+      local -A seen_globs=()
+      read -r -a globs <<< "$value"
+      for word in "${globs[@]}"; do
+        [[ $word =~ ^[A-Za-z0-9_*?-][A-Za-z0-9._*?-]*$ && $word != *.md ]] \
+          || { echo "« $word » : motif de nom attendu (lettres, chiffres, « . _ - », jokers « * ? », sans « / » ni « .md » ni point en tête)"; return 1; }
+        [[ -z ${seen_globs[$word]+x} ]] || { echo "« $word » écrit deux fois dans la liste"; return 1; }
+        seen_globs[$word]=1
+      done
+      ;;
     regex)
       # bash, pas grep : le grep de BusyBox (runner de la forge) rend 1 — « aucune correspondance » —
       # sur une expression invalide, là où GNU grep rend 2. « [[ =~ ]] » rend 2 sur les deux libc.
@@ -260,10 +280,11 @@ config_load() { # $1 = fichier
   done < "$raw"
   rm -f "$raw"
   # Le schéma du fichier décide des champs attendus. Illisible, il est signalé par la vérification de
-  # type ci-dessous, et les champs sont comptés au dernier schéma.
+  # type ci-dessous, et les champs sont comptés au schéma 3 : un fichier sans schéma lisible n'est pas
+  # présumé keyed.
   local level=3
   case ${values[workflow.schema]:-} in
-    1|2) level=${values[workflow.schema]} ;;
+    1|2|4) level=${values[workflow.schema]} ;;
   esac
   for key in "${!seen[@]}"; do
     if [[ -n ${config_removed[$key]+x} ]]; then
@@ -318,6 +339,13 @@ config_load() { # $1 = fichier
     fi
     if [[ ${values[guard.patterns-file]} == none && ${values[guard.command]} != none ]]; then
       problems+=("guard.patterns-file : « none » exige guard.command = none (un garde-fou sans motif ne garde rien).")
+    fi
+    # keyed lit sprint.non-story-files, que seul le schéma 4 porte ; ailleurs, le champ ne veut rien dire
+    if [[ ${values[sprint.convention]} == keyed ]] && ((level < 4)); then
+      problems+=("sprint.convention : « keyed » exige le schéma 4 (champ sprint.non-story-files) ; workflow.schema vaut $level.")
+    fi
+    if ((level >= 4)) && [[ ${values[sprint.convention]} != keyed && ${values[sprint.non-story-files]} != none ]]; then
+      problems+=("sprint.non-story-files : doit valoir « none » quand sprint.convention ne vaut pas « keyed ».")
     fi
     config_pair_rule problems values ci.workflow ci.status-context
     if [[ ${values[forge.release-branch]} == "${values[forge.base]}" ]]; then

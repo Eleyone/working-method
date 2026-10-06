@@ -145,12 +145,26 @@ base_sha=$(git rev-parse --verify --quiet "refs/remotes/origin/$base^{commit}") 
 changed=$(git diff --name-only "$base_sha...$head_sha") || die "liste des fichiers de la PR impossible."
 [[ -n $changed ]] || die "la PR n° $pr ne modifie aucun fichier."
 
-story_num="" story_key=""
+story_num="" story_key="" story_file="" story_ambiguous=""
 if [[ $convention == none ]]; then
   story_num=""
+elif [[ $convention == keyed ]]; then
+  # keyed : la story est la clé que le nom de branche désigne, directement ou par alias ; aucune : le
+  # verrou de suivi fait le contrôle global. Deux stories pour une branche bloquent le verrou de suivi,
+  # comme une story en double en numbered : jamais un repli sur le contrôle global.
+  rc=0
+  story_ref=$(git show "$head_sha:$status_file" 2>/dev/null | sprint_keyed_story_from_branch "$branch") || rc=$?
+  if ((rc == 0)); then
+    story_key=${story_ref%%$'\t'*}
+    story_file=${story_ref#*$'\t'}
+    story_num=$story_key
+  elif ((rc == 2)); then
+    story_ambiguous=1
+  fi
 elif story_num=$(story_number_from_branch "$branch"); then
   # story absente, en double ou suivi illisible : pas de clé ; le verrou de suivi en donne la raison
   story_key=$(git show "$head_sha:$status_file" 2>/dev/null | sprint_story_key "$story_num") || story_key=""
+  story_file=$story_key
 else
   story_num=""
 fi
@@ -194,7 +208,7 @@ else
     model=${parent_report#*model=}; model=${model%% *}
     if [[ $parent_report != *verdict=pass ]]; then
       report bloque "revue LLM" "dernier rapport sur le parent de la tête : block ($model)."
-    elif reason=$(status_commit_ok "$parent_sha" "$head_sha" "$story_key" "$status_file" "$stories_dir"); then
+    elif reason=$(status_commit_ok "$parent_sha" "$head_sha" "$story_key" "$status_file" "$stories_dir" "$convention" "$story_file"); then
       report passe "revue LLM" "rapport pass sur ${parent_sha:0:7} ($model) ; le commit de tête respecte la règle du commit de statut."
     else
       report bloque "revue LLM" "rapport pass sur ${parent_sha:0:7}, mais le commit de tête sort de la règle du commit de statut ($reason) : nouvelle revue exigée."
@@ -354,9 +368,12 @@ if [[ $convention == none ]]; then
   report inactif "suivi de sprint" "désactivé (sprint.convention = none) : aucun suivi de sprint n'est contrôlé."
 elif ! git cat-file -e "$base_sha:$status_file" 2>/dev/null && git cat-file -e "$head_sha:$status_file" 2>/dev/null; then
   report passe "suivi de sprint" "exemption d'amorçage : cette PR ajoute $status_file."
+elif [[ -n $story_ambiguous ]]; then
+  report bloque "suivi de sprint" "la branche $branch désigne plus d'une story du suivi (deux clés, ou une clé et un alias) : fusion refusée."
 else
   consistency=("$script_dir/sprint-consistency.sh" --rev "$head_sha")
   label="contrôle global (branche sans numéro de story)"
+  [[ $convention != keyed ]] || label="contrôle global (branche sans story dans le suivi)"
   if [[ -n $story_num ]]; then
     consistency=("$script_dir/sprint-consistency.sh" --merge "$story_num" --rev "$head_sha")
     label="story $story_num à done"

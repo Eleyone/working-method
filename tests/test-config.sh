@@ -151,7 +151,7 @@ case_config_none_desactive_et_se_lit() {
 
 case_config_types_invalides() {
   local change
-  for change in workflow.schema=4 forge.repo=sans-barre "forge.base=a..b" "forge.base=-dev" \
+  for change in workflow.schema=5 forge.repo=sans-barre "forge.base=a..b" "forge.base=-dev" \
     "forge.branch-prefixes=feat/ fix" "forge.env-file=/etc/env" "forge.env-file=../.env" \
     "forge.env-file=a/./b" "sprint.convention=libre" review.report=courriel review.timeout=15m \
     review.timeout=0 "review.exempt-paths=(" ci.bootstrap=yes bmad.version=6.12 \
@@ -480,6 +480,105 @@ case_config_surcharge_forme_et_doublon_refuses() {
   load
   assert_eq 2 "$rc" "une surcharge écrite deux fois est refusée"
   assert_contains "module.tea.test-framework : écrit 2 fois" "$err" "le doublon est nommé"
+}
+
+# --- schéma 4 : la convention keyed et ses fichiers qui ne sont pas des stories (calculette#outillage-5)
+
+# Un projet keyed au schéma 4 : $@ = changements de plus.
+keyed_config() {
+  write_workflow_config "$work/projet" workflow.schema=4 sprint.convention=keyed \
+    "sprint.non-story-files=deferred-work spec-* *retro*" "$@"
+}
+
+case_config_schema_4_keyed_est_lu() {
+  keyed_config
+  load
+  assert_eq 0 "$rc" "schéma 4, keyed et sa liste (messages : $err)"
+  config_load "$work/projet/workflow.config"
+  local motifs
+  config_get motifs sprint.non-story-files
+  assert_eq "deferred-work spec-* *retro*" "$motifs" "la liste est rendue telle quelle, jokers compris"
+}
+
+case_config_schema_3_reste_lu() {
+  # Le schéma 4 ajoute un champ : le 3 reste lu, sans migration pour les projets numbered.
+  write_workflow_config "$work/projet"
+  load
+  assert_eq 0 "$rc" "un fichier au schéma 3 reste valide (messages : $err)"
+  config_load "$work/projet/workflow.config"
+  run config_get motifs sprint.non-story-files
+  assert_eq 2 "$rc" "le champ du schéma 4 ne se lit pas dans un fichier au schéma 3"
+  assert_contains "champ « sprint.non-story-files » du schéma 4" "$err" "le schéma du champ est nommé"
+}
+
+case_config_schema_4_exige_non_story_files() {
+  write_workflow_config "$work/projet" workflow.schema=4
+  load
+  assert_eq 2 "$rc" "le champ est requis au schéma 4"
+  assert_contains "sprint.non-story-files : champ absent" "$err" "le champ est nommé"
+}
+
+case_config_non_story_files_inconnu_du_schema_3() {
+  write_workflow_config "$work/projet" sprint.non-story-files=none
+  load
+  assert_eq 2 "$rc" "un champ du schéma 4 est inconnu du schéma 3"
+  assert_contains "sprint.non-story-files : champ du schéma 4, inconnu du schéma 3" "$err" "le champ et les schémas sont nommés"
+}
+
+case_config_keyed_exige_le_schema_4() {
+  write_workflow_config "$work/projet" sprint.convention=keyed
+  load
+  assert_eq 2 "$rc" "keyed au schéma 3 est refusé"
+  assert_contains "sprint.convention : « keyed » exige le schéma 4" "$err" "le schéma et le champ manquant sont nommés"
+}
+
+case_config_non_story_files_seulement_avec_keyed() {
+  local convention
+  for convention in numbered none; do
+    if [[ $convention == none ]]; then
+      write_workflow_config "$work/projet" workflow.schema=4 sprint.convention=none sprint.status-file=none \
+        sprint.stories-dir=none sprint.spec-source=none "sprint.non-story-files=spec-*"
+    else
+      write_workflow_config "$work/projet" workflow.schema=4 "sprint.non-story-files=spec-*"
+    fi
+    load
+    assert_eq 2 "$rc" "une liste sans keyed est refusée ($convention)"
+    assert_contains "sprint.non-story-files : doit valoir « none » quand sprint.convention ne vaut pas « keyed »" "$err" "la règle est nommée ($convention)"
+  done
+  write_workflow_config "$work/projet" workflow.schema=4 sprint.non-story-files=none
+  load
+  assert_eq 0 "$rc" "numbered au schéma 4 avec none (messages : $err)"
+  keyed_config sprint.non-story-files=none
+  load
+  assert_eq 0 "$rc" "keyed avec none : tout fichier .md est une story (messages : $err)"
+}
+
+case_config_non_story_files_jamais_etendus_aux_fichiers_du_dossier_courant() {
+  # Lu depuis un dossier qui contient « spec-a+b » : « spec-* » ne doit pas devenir ce nom (refusé, « + »).
+  keyed_config "sprint.non-story-files=deferred-work spec-*"
+  mkdir -p "$work/ici"
+  : > "$work/ici/spec-a+b"
+  rc=0
+  (cd "$work/ici" && config_load "$work/projet/workflow.config") > "$work/.out" 2> "$work/.err" || rc=$?
+  assert_eq 0 "$rc" "les motifs sont lus tels quels (messages : $(cat "$work/.err"))"
+}
+
+case_config_non_story_files_formes_invalides() {
+  local valeur
+  local raison
+  while IFS='|' read -r valeur raison; do
+    keyed_config "sprint.non-story-files=$valeur"
+    load
+    assert_eq 2 "$rc" "forme refusée : $valeur"
+    assert_contains "sprint.non-story-files : $raison" "$err" "le champ et la raison sont nommés : $valeur"
+  done <<'CAS'
+spec-* spec-*|« spec-* » écrit deux fois
+a/b|« a/b » : motif de nom attendu
+spec-[x]|« spec-[x] » : motif de nom attendu
+x.md|« x.md » : motif de nom attendu
+x  y|liste de motifs attendue
+.cache|« .cache » : motif de nom attendu
+CAS
 }
 
 run_case "$@"

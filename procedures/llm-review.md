@@ -74,7 +74,7 @@ La revue de spec exige un suivi numéroté (`sprint.convention = numbered`) et u
    ```
 
    Un verdict `block` se publie comme un `pass` : c'est un résultat, pas une erreur.
-5. Si le projet suit ses stories (`sprint.convention = numbered`) et que la branche porte un numéro de story, le script ajoute aussi le rapport à la fin de la section « Revue du code » du fichier de story, si la branche courante est celle de la PR. L'auteur ajoute sous le rapport, sans le modifier, sa décision pour chaque constat : dans le commit de statut `done` après un `pass`, qui n'admet que des lignes ajoutées au fichier de story et à `deferred-work.md`, ou avec ses corrections après un `block`.
+5. Si le projet suit ses stories et que la branche désigne une story (`numbered` : son numéro ; `keyed` : sa clé, directement ou par alias, `sprint-consistency.md`), le script ajoute aussi le rapport à la fin de la section « Revue du code » du fichier de story, si la branche courante est celle de la PR. L'auteur ajoute sous le rapport, sans le modifier, sa décision pour chaque constat : dans le commit de statut `done` après un `pass`, qui n'admet que des lignes ajoutées au fichier de story et à `deferred-work.md`, ou avec ses corrections après un `block`.
 
 La revue dure plusieurs minutes, jusqu'à 15 : un agent la lance en arrière-plan et attend sa fin.
 
@@ -113,7 +113,7 @@ Dans l'ordre. Tout refus avant la relecture n'envoie rien au relecteur ; tout re
 
 1. La trace du shell est coupée, puis `jq`, `curl`, `agy` et `timeout` sont présents.
 2. Exactement un usage est demandé : `--story <n.m>`, un numéro de PR ou `--range`.
-3. `workflow.config` est lu et validé en entier — table `review.reviewers` comprise : une entrée dont le relecteur est du même fournisseur que l'auteur, ou une ancienne clé `review.reviewer-for-*`, l'arrête en `2` ; le fournisseur d'`AUTHOR_LLM` a une entrée dans la table, sinon `2`, sans relecteur par défaut ; une valeur que l'outillage ne sait pas encore servir (`review.report = file`, `sprint.convention = keyed`) l'arrête en `2`, en nommant la story qui l'apportera ; la couche projet existe et n'est pas vide.
+3. `workflow.config` est lu et validé en entier — table `review.reviewers` comprise : une entrée dont le relecteur est du même fournisseur que l'auteur, ou une ancienne clé `review.reviewer-for-*`, l'arrête en `2` ; le fournisseur d'`AUTHOR_LLM` a une entrée dans la table, sinon `2`, sans relecteur par défaut ; une valeur que l'outillage ne sait pas encore servir (`review.report = file` ; `--story` en `sprint.convention = keyed`) l'arrête en `2`, en nommant la story qui l'apportera ; la couche projet existe et n'est pas vide.
 4. Le dépôt distant `origin` est celui de `forge.repo`.
 5. Si le projet a un garde-fou, son fichier de motifs existe et contient au moins un motif ; le fichier de contexte, s'il est donné, ne contient aucun motif privé.
 6. Revue du code : le fichier d'environnement est lu par `gitea/gitea.sh`, sans afficher de valeur, et le jeton appartient à `GITEA_USER` ; la PR est ouverte ; sa base, sa branche et son SHA de tête sont lus par l'API, puis récupérés depuis la forge ; la branche n'a pas bougé entre-temps. Revue de spec : la tête de la base est lue sur la forge, et la story figure dans le suivi de sprint.

@@ -195,7 +195,7 @@ done_commit() { # changements admis par la règle du commit de statut
 
 check_rule() { # lance la règle sur le dépôt de test
   cd "$work/depot"
-  run status_commit_ok "$reviewed" "$(git rev-parse HEAD)" 0-8-essai "$stories/sprint-status.yaml" "$stories"
+  run status_commit_ok "$reviewed" "$(git rev-parse HEAD)" 0-8-essai "$stories/sprint-status.yaml" "$stories" numbered 0-8-essai
   cd "$root"
 }
 
@@ -264,6 +264,189 @@ case_commit_de_statut_deux_commits() {
   check_rule
   assert_eq 1 "$rc" "deux commits après le SHA relu"
   assert_contains "plus d'un commit" "$out" "raison"
+}
+
+# --- règle du commit de statut, convention keyed (calculette#outillage-5) ----------------------------
+# Le suivi d'origine (calculette#outillage-5) : epics nommés, commentaires de fin de ligne, fichier de story nommé par un
+# alias. Le commit de statut garde chaque commentaire tel quel : seule la valeur du statut change.
+
+keyed_repo() {
+  new_repo
+  mkdir -p "$work/depot/$stories"
+  printf 'last_updated: 2026-10-05\naliases:\n  court: fix-long-nom\ndevelopment_status:\n  epic-outillage: in-progress  # epic\n  fix-long-nom: review  # décision\n  epic-outillage-retrospective: optional\n' \
+    > "$work/depot/$stories/sprint-status.yaml"
+  printf '# Court\n\nStatus: review  # en revue\n\n## Revue\n' > "$work/depot/$stories/court.md"
+  printf 'code\n' > "$work/depot/script.sh"
+  reviewed=$(commit_all "revue")
+}
+
+keyed_done_commit() { # $1 commentaire de la story dans le suivi (décision), $2 statut de l'epic (done)
+  printf 'last_updated: 2026-10-06\naliases:\n  court: fix-long-nom\ndevelopment_status:\n  epic-outillage: %s  # epic\n  fix-long-nom: done  # %s\n  epic-outillage-retrospective: optional\n' \
+    "${2:-done}" "${1:-décision}" > "$work/depot/$stories/sprint-status.yaml"
+  printf '# Court\n\nStatus: done  # en revue\n\n## Revue\n\nDécision.\n' > "$work/depot/$stories/court.md"
+}
+
+check_keyed_rule() {
+  cd "$work/depot"
+  run status_commit_ok "$reviewed" "$(git rev-parse HEAD)" fix-long-nom "$stories/sprint-status.yaml" "$stories" keyed court
+  cd "$root"
+}
+
+case_commit_de_statut_keyed_admis() {
+  keyed_repo
+  keyed_done_commit
+  commit_all "done" > /dev/null
+  check_keyed_rule
+  assert_eq 0 "$rc" "epic nommé à done, commentaires gardés, fichier de l'alias (raison : $out)"
+}
+
+case_commit_de_statut_keyed_epic_inchange() {
+  keyed_repo
+  keyed_done_commit décision in-progress
+  commit_all "done" > /dev/null
+  check_keyed_rule
+  assert_eq 0 "$rc" "seule la story passe à done (raison : $out)"
+}
+
+case_commit_de_statut_keyed_commentaire_change() {
+  keyed_repo
+  keyed_done_commit "autre décision"
+  commit_all "done" > /dev/null
+  check_keyed_rule
+  assert_eq 1 "$rc" "un commentaire du suivi réécrit sort de la règle"
+  assert_contains "suivi de sprint" "$out" "raison"
+}
+
+case_commit_de_statut_keyed_retrospective() {
+  keyed_repo
+  keyed_done_commit
+  sed -i 's/epic-outillage-retrospective: optional/epic-outillage-retrospective: done/' "$work/depot/$stories/sprint-status.yaml"
+  commit_all "done" > /dev/null
+  check_keyed_rule
+  assert_eq 1 "$rc" "une rétrospective ne change pas dans un commit de statut"
+  assert_contains "suivi de sprint" "$out" "raison"
+}
+
+case_commit_de_statut_keyed_mauvais_fichier() {
+  keyed_repo
+  keyed_done_commit
+  commit_all "done" > /dev/null
+  check_keyed_rule
+  assert_eq 0 "$rc" "le fichier nommé par l'appelant est celui du commit (raison : $out)"
+  cd "$work/depot"
+  run status_commit_ok "$reviewed" "$(git rev-parse HEAD)" fix-long-nom "$stories/sprint-status.yaml" "$stories" keyed fix-long-nom
+  cd "$root"
+  assert_eq 1 "$rc" "le fichier de story n'est pas celui que nomme l'appelant"
+  assert_contains "hors de la règle du commit de statut" "$out" "raison"
+}
+
+case_commit_de_statut_keyed_gardes_du_suivi() {
+  # Chaque garde du suivi, sur l'entrée qu'elle doit refuser : une ligne retirée hors des lignes de
+  # statut, une ligne ajoutée hors des lignes de statut, une story qui ne passe pas à done.
+  local cas raison
+  while IFS='|' read -r cas raison; do
+    keyed_repo
+    keyed_done_commit
+    case $cas in
+      suppression) sed -i '/^  court: fix-long-nom$/d' "$work/depot/$stories/sprint-status.yaml" ;;
+      ajout) printf '  fix-nouvelle: backlog\n' >> "$work/depot/$stories/sprint-status.yaml" ;;
+      pas-done) sed -i 's/^  fix-long-nom: done  # décision$/  fix-long-nom: in-progress  # décision/' "$work/depot/$stories/sprint-status.yaml" ;;
+    esac
+    commit_all "done" > /dev/null
+    check_keyed_rule
+    assert_eq 1 "$rc" "garde « $cas » : la règle refuse"
+    assert_contains "$raison" "$out" "garde « $cas » : raison"
+    rm -rf "$work/depot"
+  done <<'CAS'
+suppression|suivi de sprint : suppression hors des lignes de statut
+ajout|suivi de sprint : ajout hors des lignes de statut
+pas-done|suivi de sprint : ajout hors des lignes de statut
+CAS
+  # la story absente des lignes ajoutées, sans autre changement : seule la garde « pas à done » répond
+  keyed_repo
+  sed -i 's/^last_updated: .*/last_updated: 2026-10-07/' "$work/depot/$stories/sprint-status.yaml"
+  printf '# Court\n\nStatus: done  # en revue\n\n## Revue\n' > "$work/depot/$stories/court.md"
+  commit_all "done" > /dev/null
+  check_keyed_rule
+  assert_eq 1 "$rc" "la story ne passe pas à done"
+  assert_contains "suivi de sprint : la story ne passe pas à done" "$out" "raison"
+}
+
+case_commit_de_statut_keyed_en_tete_de_forme_ancienne() {
+  # Les formes que lit le contrôle keyed : à done, l'en-tête garde la sienne, ou passe à « Status: done ».
+  local avant apres
+  while IFS='|' read -r avant apres; do
+    keyed_repo
+    printf '# Court\n\n%s\n\n## Revue\n' "$avant" > "$work/depot/$stories/court.md"
+    reviewed=$(commit_all "revue")
+    keyed_done_commit
+    printf '# Court\n\n%s\n\n## Revue\n\nDécision.\n' "$apres" > "$work/depot/$stories/court.md"
+    commit_all "done" > /dev/null
+    check_keyed_rule
+    assert_eq 0 "$rc" "« $avant » → « $apres » (raison : $out)"
+    rm -rf "$work/depot"
+  done <<'CAS'
+status: 'review'|status: 'done'
+status: 'review'|Status: done
+**Status**: review  # x|**Status**: done  # x
+**Status**: review  # x|Status: done  # x
+CAS
+  keyed_repo
+  keyed_done_commit
+  printf '# Court\n\nStatus: done  # autre\n\n## Revue\n\nDécision.\n' > "$work/depot/$stories/court.md"
+  commit_all "done" > /dev/null
+  check_keyed_rule
+  assert_eq 1 "$rc" "le commentaire de l'en-tête change"
+  assert_contains "commentaire changé" "$out" "raison"
+}
+
+case_commit_de_statut_keyed_gardes_du_fichier_de_story() {
+  # Une ligne retirée du fichier de story autre que l'en-tête, puis un en-tête qui ne passe pas à done.
+  keyed_repo
+  keyed_done_commit
+  printf '# Court\n\nStatus: done  # en revue\n\nDécision.\n' > "$work/depot/$stories/court.md"
+  commit_all "done" > /dev/null
+  check_keyed_rule
+  assert_eq 1 "$rc" "une ligne retirée du fichier de story autre que l'en-tête"
+  assert_contains "fichier de story : suppression autre que la ligne « Status: review »" "$out" "raison"
+  keyed_repo
+  keyed_done_commit
+  printf '# Court\n\nStatus: in-progress  # en revue\n\n## Revue\n\nDécision.\n' > "$work/depot/$stories/court.md"
+  commit_all "done" > /dev/null
+  check_keyed_rule
+  assert_eq 1 "$rc" "l'en-tête ne passe pas à done"
+  assert_contains "fichier de story : « Status: done » absent" "$out" "raison"
+}
+
+case_commit_de_statut_keyed_deferred_work() {
+  keyed_repo
+  printf '# Travail reporté\n- entrée\n' > "$work/depot/$stories/deferred-work.md"
+  reviewed=$(commit_all "revue")
+  keyed_done_commit
+  printf -- '- ajout\n' >> "$work/depot/$stories/deferred-work.md"
+  commit_all "done" > /dev/null
+  check_keyed_rule
+  assert_eq 0 "$rc" "une ligne ajoutée à deferred-work.md est admise (raison : $out)"
+  keyed_repo
+  printf '# Travail reporté\n- entrée\n' > "$work/depot/$stories/deferred-work.md"
+  reviewed=$(commit_all "revue")
+  keyed_done_commit
+  printf '# Travail reporté\n' > "$work/depot/$stories/deferred-work.md"
+  commit_all "done" > /dev/null
+  check_keyed_rule
+  assert_eq 1 "$rc" "une ligne retirée de deferred-work.md sort de la règle"
+  assert_contains "deferred-work.md : ligne supprimée" "$out" "raison"
+}
+
+case_commit_de_statut_convention_inconnue() {
+  status_repo
+  done_commit
+  commit_all "done" > /dev/null
+  cd "$work/depot"
+  run status_commit_ok "$reviewed" "$(git rev-parse HEAD)" 0-8-essai "$stories/sprint-status.yaml" "$stories" autre 0-8-essai
+  cd "$root"
+  assert_eq 1 "$rc" "convention inconnue : la règle refuse"
+  assert_contains "convention" "$out" "raison"
 }
 
 case_verrou_ci_statut_ignore() {

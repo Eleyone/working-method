@@ -50,7 +50,7 @@ Chaque verrou s'affiche avec son état : `passe`, `absent` (CI pendant l'amorça
      - Un `checks.command` qui sort en `2` compte aujourd'hui comme un substitut en échec (verrou `bloque`, sortie `1`).
    - **Sans règle d'amorçage (`ci.bootstrap = false`)**, une CI sans statut et sans workflow sur la base **bloque** : il n'y a pas de substitut.
    - **L'exception documentaire ne couvre pas ce verrou.** Une PR dispensée de revue ne l'est jamais de CI.
-5. **Suivi de sprint** : `sprint-consistency.sh --merge <n.m> --rev <SHA de tête>`, le numéro de story étant tiré du nom de la branche (`chore/0-7-…` → `0.7`). Une branche sans numéro de story passe par le contrôle global (`--rev <SHA de tête>`). Exemption d'amorçage : la PR qui ajoute `sprint.status-file` à une base qui ne l'a pas. `sprint.convention = none` : verrou `inactif` ; `keyed` sort en `2` jusqu'à la story 5.
+5. **Suivi de sprint** : `sprint-consistency.sh --merge <n.m> --rev <SHA de tête>`, le numéro de story étant tiré du nom de la branche (`chore/0-7-…` → `0.7`). Une branche sans numéro de story passe par le contrôle global (`--rev <SHA de tête>`). Exemption d'amorçage : la PR qui ajoute `sprint.status-file` à une base qui ne l'a pas. `sprint.convention = none` : verrou `inactif`. `keyed` : `--merge <clé>`, la clé que désigne le nom de la branche, directement ou par alias (`procedures/sprint-consistency.md`, § *Convention keyed*) ; sans story, contrôle global.
 
 ## Règle du commit de statut
 
@@ -61,6 +61,13 @@ Le rapport `pass` sur le parent de la tête vaut pour la tête si le commit de t
 - dans le fichier de la story, ne supprime que la ligne `Status: review`, ajoute `Status: done`, et n'ajoute par ailleurs que des lignes ;
 - dans `deferred-work.md` du dossier des stories, n'ajoute que des lignes ;
 - ne touche aucun autre fichier.
+
+En `keyed` (`calculette#outillage-5`) : l'epic est `epic-<nom>`, jamais une rétrospective ; le fichier de la
+story est celui que nomme la branche (le nom qui porte l'alias, s'il y en a un) ; une ligne de statut
+peut porter un commentaire de fin de ligne, qui reste **identique** — chaque ligne ajoutée au suivi a sa
+ligne retirée, au statut près. Dans le fichier de la story, la ligne `Status: review` retirée peut être
+de l'une des formes que lit le contrôle keyed (`status: 'review'`, `**Status**: review`) ; la ligne
+ajoutée garde cette forme ou passe à `Status: done`, et garde son commentaire.
 
 Toute autre modification exige une nouvelle revue.
 

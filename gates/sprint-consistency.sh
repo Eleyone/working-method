@@ -2,24 +2,30 @@
 # Vérifie que le suivi de sprint et les fichiers de story disent la même chose.
 #
 #   sprint-consistency.sh                               contrôle global de l'arbre de travail
-#   sprint-consistency.sh --merge <n.m>                 en plus, la story n.m est à done des deux côtés
-#   sprint-consistency.sh [--merge <n.m>] --rev <commit>   lit le suivi et les fichiers dans ce commit
+#   sprint-consistency.sh --merge <story>               en plus, la story est à done des deux côtés
+#   sprint-consistency.sh [--merge <story>] --rev <commit> lit le suivi et les fichiers dans ce commit
+#
+# <story> : son numéro n.m (convention numbered), ou sa clé (convention keyed).
 #
 # Code de sortie : 0 cohérent, ou suivi désactivé (sprint.convention = none, et le message le dit) ;
-# 1 au moins un écart ; 2 contrôle impossible (usage, workflow.config refusé, convention que l'outillage
-# ne sait pas encore servir, suivi absent ou vide, commit introuvable, liste des fichiers de story
-# illisible).
+# 1 au moins un écart ; 2 contrôle impossible (usage, workflow.config refusé, convention inconnue, suivi
+# absent ou vide, commit introuvable, liste ou fichier de story illisible).
 # Les chemins du suivi et des fichiers de story viennent de workflow.config (sprint.status-file,
-# sprint.stories-dir) ; le vocabulaire des statuts et la forme des clés sont ceux de la convention
-# « numbered ». Statuts seulement en v1, pas les branches (D-17 du projet source). Bash seul, sans
-# Python, outil YAML ni option GNU.
+# sprint.stories-dir), et la forme des clés de sprint.convention :
+#   numbered  clés « n-m-titre », epics « epic-n » dont le statut se déduit de leurs stories ;
+#   keyed     clés kebab-case libres, bloc « aliases: », epics « epic-<nom> » vérifiés contre le seul
+#             vocabulaire, rétrospectives « optional » ou « done », fichiers hors story déclarés par
+#             sprint.non-story-files (règles reprises de calculette#outillage-5).
+# Statuts seulement en v1, pas les branches (D-17 du projet source). Bash seul, sans Python, outil YAML
+# ni option GNU.
 # Procédure : procedures/sprint-consistency.md
 set -euo pipefail
 
 readonly script_name=sprint-consistency
 readonly story_statuses=" backlog ready-for-dev in-progress review done "
 readonly epic_statuses=" backlog in-progress done "
-readonly usage="usage : sprint-consistency.sh [--merge <n.m>] [--rev <commit>]"
+readonly retro_statuses=" optional done "
+readonly usage="usage : sprint-consistency.sh [--merge <story>] [--rev <commit>]"
 
 die() { printf '%s: %b\n' "$script_name" "$*" >&2; exit 2; }
 
@@ -37,7 +43,6 @@ while (($#)); do
     *) die "$usage" ;;
   esac
 done
-[[ -z $merge || $merge =~ ^[0-9]+\.[0-9]+[a-z]?$ ]] || die "numéro de story attendu après --merge, par exemple 0.6."
 
 root=""
 config_project_root root || die "à lancer dans le dépôt."
@@ -54,9 +59,16 @@ case $rc in
      exit 0 ;;
   *) die "$convention_reason" ;;
 esac
+if [[ $convention == keyed ]]; then
+  [[ -z $merge || $merge =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || die "clé de story attendue après --merge (convention keyed), par exemple fix-plafond-pagination."
+else
+  [[ -z $merge || $merge =~ ^[0-9]+\.[0-9]+[a-z]?$ ]] || die "numéro de story attendu après --merge, par exemple 0.6."
+fi
 config_get stories_dir sprint.stories-dir
 config_get status_file sprint.status-file
-readonly stories_dir status_file
+non_story_files=""
+[[ $convention != keyed ]] || config_get non_story_files sprint.non-story-files
+readonly stories_dir status_file non_story_files
 
 # --- lecture : arbre de travail, ou commit donné par --rev -------------------------------------
 if [[ -n $rev ]]; then
@@ -92,6 +104,76 @@ entries=$(sprint_entries <<< "$yaml") || die "lecture de $status_file impossible
 gaps=()
 gap() { gaps+=("$1"); }
 
+# --- convention keyed : règles reprises de calculette#outillage-5 (procedures/sprint-consistency.md) -
+if [[ $convention == keyed ]]; then
+declare -A story_status=()
+stories=0 epics=0 files=0 alias_count=0
+keyed_aliases=$(sprint_block aliases <<< "$yaml") || die "lecture de $status_file impossible $where."
+# statuts du suivi, classés par la forme de la clé : rétrospective, epic, story
+while IFS=$'\t' read -r key value; do
+  [[ -n $key ]] || continue
+  if [[ $key == *-retrospective ]]; then
+    [[ $retro_statuses == *" $value "* ]] || gap "statut de rétrospective invalide : $key = « $value » (attendu : optional done)."
+  elif [[ $key == epic-* ]]; then
+    epics=$((epics + 1))
+    [[ $epic_statuses == *" $value "* ]] || gap "statut d'epic invalide : $key = « $value » (attendu : backlog in-progress done)."
+  else
+    stories=$((stories + 1))
+    story_status[$key]=$value
+    [[ $story_statuses == *" $value "* ]] || gap "statut de story invalide : $key = « $value » (attendu : backlog ready-for-dev in-progress review done)."
+  fi
+done <<< "$entries"
+# un alias qui pointe dans le vide rattacherait un fichier à rien du tout
+declare -A tracker_keys=()
+while IFS=$'\t' read -r key value; do
+  [[ -z $key ]] || tracker_keys[$key]=$value
+done <<< "$entries"
+while IFS=$'\t' read -r key value; do
+  [[ -n $key ]] || continue
+  alias_count=$((alias_count + 1))
+  [[ -n ${tracker_keys[$value]+x} ]] || gap "alias sans cible : $key → $value (clé absente de development_status)."
+done <<< "$keyed_aliases"
+# chaque fichier .md du dossier des stories est une story, sauf ceux de sprint.non-story-files ; la liste
+# est lue d'abord, pour qu'un échec arrête le script
+names=$(list_names) || die "lecture de la liste des fichiers de story impossible $where : aucune conclusion sur la cohérence."
+declare -A keyed_file_of=()
+while IFS= read -r name; do
+  # --rev liste tous les fichiers du dossier, l'arbre de travail les seuls .md
+  [[ -n $name && $name == *.md ]] || continue
+  base=${name%.md}
+  ! sprint_is_non_story "$base" "$non_story_files" || continue
+  files=$((files + 1))
+  rc=0
+  key=$(sprint_keyed_resolve "$base" "$entries" "$keyed_aliases") || rc=$?
+  if ((rc == 2)); then
+    gap "$name — clé directe ET alias : rattachement ambigu, à trancher à la main."
+    continue
+  elif ((rc != 0)); then
+    gap "$name — aucune entrée dans le suivi (ni directe, ni par alias)."
+    continue
+  fi
+  keyed_file_of[$key]=$name
+  # la valeur de la clé dans le suivi, quelle que soit sa forme : le fichier lui est comparé
+  value=${tracker_keys[$key]-}
+  if [[ -z $value ]]; then
+    gap "$name — clé « $key » sans valeur dans le suivi (alias périmé ?)."
+    continue
+  fi
+  # le fichier est lu d'abord : une lecture impossible arrête le script au lieu de passer pour « Status: absent »
+  content=$(read_file "$stories_dir/$name") || die "lecture de $stories_dir/$name impossible $where : aucune conclusion sur la cohérence."
+  rc=0
+  header=$(sprint_keyed_header_status <<< "$content") || rc=$?
+  if ((rc != 0)); then
+    gap "$name — aucun en-tête « Status: » lisible."
+  elif [[ $story_statuses != *" $header "* ]]; then
+    gap "$name — en-tête « $header » n'est pas un statut de story (attendu : backlog ready-for-dev in-progress review done)."
+  elif [[ $header != "$value" ]]; then
+    gap "$name — en-tête « $header », suivi « $value » (clé : $key)."
+  fi
+done <<< "$names"
+
+# --- convention numbered ------------------------------------------------------------------------
+else
 declare -A story_status epic_status epic_total epic_waiting epic_done
 stories=0 epics=0 files=0
 while IFS=$'\t' read -r key value; do
@@ -172,6 +254,8 @@ done
 for number in "${!epic_total[@]}"; do
   [[ -n ${epic_status[$number]+x} ]] || gap "stories de l'epic $number sans ligne epic-$number dans le suivi."
 done
+
+fi
 
 # --- questions ouvertes des rétrospectives -------------------------------------------------------
 # La section « open_questions » existe pour qu'une question ne se perde pas dans la prose d'un
@@ -297,7 +381,15 @@ while IFS= read -r line; do
 done <<< "$yaml"
 close_question
 
-if [[ -n $merge ]]; then
+if [[ -n $merge && $convention == keyed ]]; then
+  if [[ -z ${story_status[$merge]+x} ]]; then
+    gap "story $merge absente du suivi : fusion refusée."
+  elif [[ ${story_status[$merge]} != "done" ]]; then
+    gap "story $merge à ${story_status[$merge]} dans le suivi : fusion refusée tant qu'elle n'est pas à done."
+  elif [[ -z ${keyed_file_of[$merge]+x} ]]; then
+    gap "story $merge sans fichier de story : fusion refusée."
+  fi
+elif [[ -n $merge ]]; then
   rc=0
   merge_key=$(sprint_story_key "$merge" <<< "$yaml") || rc=$?
   if ((rc == 1)); then
@@ -316,6 +408,12 @@ if ((${#gaps[@]})); then
   printf '%s: %d écart(s) %s :\n' "$script_name" "${#gaps[@]}" "$where"
   printf '  - %s\n' "${gaps[@]}" | sort
   exit 1
+fi
+if [[ $convention == keyed ]]; then
+  printf '%s: cohérent %s (%d stories, %d epics, %d fichiers de story, %d alias, %d question(s) ouverte(s))%s.\n' \
+    "$script_name" "$where" "$stories" "$epics" "$files" "$alias_count" "$questions" \
+    "${merge:+ ; story $merge à done, fusion admise}"
+  exit 0
 fi
 printf '%s: cohérent %s (%d stories, %d epics, %d fichiers de story, %d question(s) ouverte(s))%s.\n' \
   "$script_name" "$where" "$stories" "$epics" "$files" "$questions" \
