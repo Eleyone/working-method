@@ -1,6 +1,7 @@
 #!/bin/sh
 # Fournit jq à une étape de CI, et affiche le DOSSIER où il se trouve (à mettre en tête de PATH).
-# Repris du dépôt d'un projet consommateur (scripts/ci-ensure-jq.sh), sans changement de comportement.
+# Repris de scripts/ci-ensure-jq.sh, en phase B de `calculette#outillage-14` (procedures/secrets.md,
+# « Citer un projet »), sans changement de comportement.
 #
 # ⚠️ Le runner partagé exécute les jobs en mode hôte, dans un conteneur sans jq ni apt-get (constaté le
 # 03/10/2026). On n'installe RIEN sur le runner : on télécharge un binaire statique ÉPINGLÉ (version +

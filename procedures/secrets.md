@@ -42,3 +42,19 @@ ci/check-names.sh --patterns-file <liste hors du dépôt>
 - Un signalement donne le fichier et la ligne, jamais le nom trouvé.
 - Le contrôle porte sur l'**arbre**, pas sur l'historique (précision du 03/10/2026) : l'historique importé du projet source garde ses références.
 - **Un nouveau projet consommateur** ajoute son nom à la variable, dans la PR qui l'adopte (réglage du dépôt → Actions → Variables, ou `PUT /repos/<propriétaire>/working-method/actions/variables/CHECK_NAMES_PATTERNS`), et la PR le dit.
+
+### Citer un projet : `<alias>#<clé>`
+
+Décision du 06/10/2026. Une origine — la colonne « Trouvé à » d'un piège (`shell-scripts.md`), le commentaire qui dit d'où vient un script — peut citer le projet où elle est née sous une forme courte et spécifique : **`<alias>#<clé>`**, entre accents graves, par exemple `calculette#outillage-14`. Elle remplace « projet consommateur », qui ne permettait pas de retrouver le constat.
+
+- **L'alias** est un mot court, en minuscules, déclaré dans la table ci-dessous. Il n'est pas le nom du projet : `ci/check-names.sh` doit l'accepter, et la CI le prouve à chaque PR en lisant l'arbre avec la vraie liste. ⛔ Un alias que la liste refuserait ne s'écrit pas.
+- **La clé** est, en minuscules, la clé d'une story ou d'un ticket du suivi de sprint de ce projet (`outillage-3`, `fix-promotion-image-reussit-a-vide`), ou le nom d'un artefact de planification sans son extension (`sprint-change-proposal-2026-09-30`). Un constat né hors de toute story cite celle qui l'a consigné, et sa date entre parenthèses : `calculette#outillage-3` (constat du 09/09/2026). L'alias ne s'écrit jamais sans clé.
+- **Les clés `outillage-*` citées sans alias** avant cette décision (`story outillage-14`) sont celles de `calculette`.
+- **Le projet source** — celui dont l'outillage a été extrait — reste « le projet source » : ses stories se citent par leur numéro (`story 0.7`), ses renvois de PR `(<projet source>#N)` (`README.md`, *Origine*).
+- ⛔ **Ce qui reste interdit**, alias ou non : un nom de projet que la liste refuse, un nom de personne, une donnée privée (adresse de la forge, contenu d'un fichier privé, valeur d'un `.env`, motif du garde-fou ou de cette liste).
+- **Déclarer un alias** : le vérifier contre la liste sans l'afficher — dans un dépôt d'essai dont un fichier suivi contient l'alias, `ci/check-names.sh --patterns-file <liste>` doit rendre `0` —, puis l'ajouter à la table dans la PR qui l'emploie la première, et le dire.
+- **Ce qui est vérifié** : `tests/test-origines.sh` lit la colonne « Trouvé à » du tableau des pièges ; chaque cellule cite une story du projet source (`story`, `stories`, `rétrospective`) ou un `<alias>#<clé>` dont l'alias est déclaré, et aucune ne dit « projet consommateur ». Ailleurs — un commentaire de script, une procédure —, la forme n'est pas vérifiée par un test : la revue la relit, et `ci/check-names.sh` garde, sur tout l'arbre, l'interdit qui compte.
+
+| Alias | Projet | Déclaré le |
+|---|---|---|
+| `calculette` | le premier projet à avoir consommé ce dépôt en sous-module ; ses stories `outillage-*` ont conduit l'extraction | 06/10/2026 |
