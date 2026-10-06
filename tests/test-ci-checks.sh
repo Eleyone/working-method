@@ -563,4 +563,54 @@ case_aucune_construction_posterieure_a_bash_4_3() {
   assert_eq 8 "$(constructions_recentes "$work/recent.sh" | grep -c .)" "huit constructions vues ; la ligne gardée et le commentaire écartés"
 }
 
+# --- ci/checks-job.sh : le pire code l'emporte. Un 2 (étape qui n'a pas pu vérifier) reste un 2 ---------
+
+# Une copie du job dont chaque étape est un faux qui rend le code de $work/codes/<étape> (0 sinon).
+job_aux_etapes() { # $@ = « étape=code »
+  local racine=$work/job etape
+  mkdir -p "$racine/ci" "$racine/tests" "$work/codes"
+  cp "$common/ci/checks-job.sh" "$racine/ci/"
+  for etape in tests/run.sh ci/check-secrets.sh ci/check-names.sh ci/run-shellcheck.sh ci/bmad-reinstall.sh; do
+    # shellcheck disable=SC2016 # faux écrit sur le disque : son « $( ) » s'y développe à l'exécution
+    printf '#!/usr/bin/env bash\nexit "$(cat %q 2>/dev/null || echo 0)"\n' "$work/codes/${etape//\//_}" > "$racine/$etape"
+  done
+  for etape in "$@"; do printf '%s' "${etape#*=}" > "$work/codes/${etape%%=*}"; done
+  run bash "$racine/ci/checks-job.sh"
+}
+
+case_job_tout_passe_rend_0() {
+  job_aux_etapes
+  assert_eq 0 "$rc" "toutes les étapes à 0 : 0 ($err)"
+}
+
+case_job_un_ecart_rend_1() {
+  job_aux_etapes ci_check-names.sh=1
+  assert_eq 1 "$rc" "une étape à 1 : 1"
+  assert_contains "::error::checks-job : aucun nom de projet — écart constaté (code 1)" "$err" "l'étape rouge porte son ::error::"
+}
+
+case_job_un_2_l_emporte_sur_un_1() {
+  job_aux_etapes ci_check-names.sh=1 tests_run.sh=2
+  assert_eq 2 "$rc" "une étape à 2 et une à 1 : 2, jamais rangé en 1"
+  assert_contains "::error::checks-job : tests — anomalie, rien n'a été vérifié (code 2)" "$err" "le 2 est nommé comme anomalie"
+  assert_contains "::error::checks-job : aucun nom de projet — écart constaté (code 1)" "$err" "le 1 reste nommé"
+}
+
+case_job_sans_jq_ni_moyen_de_le_fournir_rend_2() {
+  job_aux_etapes
+  printf '#!/bin/sh\nexit 2\n' > "$work/job/ci/ensure-jq.sh"
+  # un PATH réduit aux outils du job, sans jq
+  local outil
+  mkdir -p "$work/sans-jq"
+  for outil in bash sh dirname cat; do ln -s "$(real_command "$outil")" "$work/sans-jq/$outil"; done
+  run env PATH="$work/sans-jq" "$work/sans-jq/bash" "$work/job/ci/checks-job.sh"
+  assert_eq 2 "$rc" "jq impossible à fournir : aucune étape ne tourne, code 2"
+  assert_contains "::error::checks-job : jq impossible à fournir" "$err" "l'étape rouge porte son ::error::"
+}
+
+case_job_un_code_inattendu_rend_2() {
+  job_aux_etapes ci_run-shellcheck.sh=127
+  assert_eq 2 "$rc" "un code hors convention (127, outil introuvable) : anomalie"
+}
+
 run_case "$@"

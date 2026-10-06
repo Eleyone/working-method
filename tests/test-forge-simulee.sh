@@ -87,6 +87,19 @@ aucune_ecriture() {
   [[ -z $ecritures ]] || { printf 'la forge a reçu une écriture :\n%s\n' "$ecritures" >&2; exit 1; }
 }
 
+# Un 2 rendu une fois la PR connue est publié en alerte sur la PR (convention à trois codes, alerte hors
+# du terminal) : la seule écriture admise est ce commentaire, qui nomme le script et le code.
+# $1 = le script attendu dans l'alerte
+seule_l_alerte() {
+  local ligne ecritures=""
+  [[ ! -f $work/appels ]] || while IFS= read -r ligne || [[ -n $ligne ]]; do
+    [[ $ligne == "GET "* || $ligne == "POST /repos/$repo/issues/$pr/comments" ]] || ecritures+="$ligne"$'\n'
+  done < "$work/appels"
+  [[ -z $ecritures ]] || { printf 'la forge a reçu une écriture autre que l alerte :\n%s\n' "$ecritures" >&2; exit 1; }
+  assert_contains "POST /repos/$repo/issues/$pr/comments" "$(appels)" "l'anomalie est publiée en alerte sur la PR"
+  assert_contains "$1 : anomalie (code 2)" "$(jq -r .body "$work/corps" 2>/dev/null | tail -n 20)" "l'alerte nomme le script et le code"
+}
+
 # --- le projet -----------------------------------------------------------------------------------
 
 stories=_bmad-output/implementation-artifacts
@@ -280,10 +293,100 @@ case_fusion_refusee_si_la_tete_a_bouge() {
   forge_prete
   api GET "/repos/$repo/pulls/$pr" "$(pr_json 0123456789abcdef0123456789abcdef01234567)" 200 2
   api POST "/repos/$repo/pulls/$pr/merge" '{}'
+  api POST "/repos/$repo/issues/$pr/comments" '{}' 201
   verifie "$pr" --merge
   assert_eq 2 "$rc" "la tête a bougé pendant l'audit : anomalie"
   assert_contains "a bougé pendant l'audit" "$err" "raison"
+  seule_l_alerte verify-and-merge-pr
+  assert_contains "alerte publiée sur la PR n° $pr" "$err" "le terminal le dit"
+}
+
+case_audit_alerte_refusee_par_la_forge_garde_le_2() {
+  # aucune réponse prévue pour le commentaire : la forge simulée rend 404, et le terminal reste seul canal
+  projet
+  forge_prete
+  api GET "/repos/$repo/pulls/$pr" "$(pr_json 0123456789abcdef0123456789abcdef01234567)"
+  verifie "$pr"
+  assert_eq 2 "$rc" "la branche a bougé depuis la lecture : anomalie"
+  assert_contains "alerte non publiée sur la PR n° $pr (HTTP 404)" "$err" "l'échec de l'alerte est dit"
+}
+
+# --- create-pull-request : 1 = écart constaté sur la branche, le garde-fou ou la forge ; 0 = ouverte ---
+
+ouvre() { # $1 titre ; depuis la branche de la story, corps dans $work/corps.md
+  git -C "$depot" checkout -q "$branche"
+  printf 'Le corps.\n' > "$work/corps.md"
+  api GET /user '{"login":"compte-essai"}'
+  # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
+  run env PATH="$work/bin:$PATH" GIT_SSH_COMMAND="$work/bin/ssh" \
+    bash -c 'cd "$1" && shift && bash "$@"' _ "$depot" "$common/gitea/create-pull-request.sh" --title "$1" --body-file "$work/corps.md"
+}
+
+case_ouverture_pr_conforme() {
+  projet
+  api GET "/repos/$repo/pulls?state=open&limit=50&page=1" '[]'
+  api POST "/repos/$repo/pulls" '{"number":8}' 201
+  api GET "/repos/$repo/pulls/8" '{"number":8,"body":"Le corps.\n"}'
+  ouvre "feat(1.2): essai"
+  assert_eq 0 "$rc" "la PR est ouverte (messages : $err)"
+  assert_contains "PR n° 8 ouverte : $branche → dev" "$out" "le numéro et la base sont donnés"
+}
+
+case_ouverture_refusee_par_le_garde_fou_rend_1() {
+  projet
+  : > "$work/garde-refuse"
+  ouvre "feat(1.2): essai"
+  assert_eq 1 "$rc" "le garde-fou refuse la branche : écart constaté"
+  assert_contains "le garde-fou public/privé refuse la branche" "$err" "le refus le dit"
   aucune_ecriture
+}
+
+case_ouverture_titre_avec_motif_prive_rend_1() {
+  projet
+  ouvre "feat(1.2): MOTIF-FACTICE"
+  assert_eq 1 "$rc" "un motif privé dans le titre : écart constaté"
+  assert_contains "le titre ou le corps contient un motif privé" "$err" "le refus le dit, sans le motif"
+  [[ $err != *MOTIF-FACTICE* ]] || { echo "le refus affiche le motif" >&2; exit 1; }
+  aucune_ecriture
+}
+
+case_ouverture_branche_non_poussee_sur_ce_commit_rend_1() {
+  projet
+  git -C "$depot" checkout -q "$branche"
+  printf 'v3\n' > "$depot/code.txt"
+  commit_all "feat(1.2): suite, pas encore poussée" > /dev/null
+  ouvre "feat(1.2): essai"
+  assert_eq 1 "$rc" "la branche locale est en avance sur la forge : écart constaté"
+  assert_contains "la branche $branche n'est pas poussée sur ce commit" "$err" "le refus le dit"
+  aucune_ecriture
+}
+
+case_ouverture_pr_deja_ouverte_rend_1() {
+  projet
+  api GET "/repos/$repo/pulls?state=open&limit=50&page=1" "$(jq -nc --arg b "$branche" '[{number: 7, head: {ref: $b}}]')"
+  ouvre "feat(1.2): essai"
+  assert_eq 1 "$rc" "une PR déjà ouverte pour la branche : écart constaté"
+  assert_contains "une PR est déjà ouverte pour $branche : n° 7" "$err" "le refus donne son numéro"
+  aucune_ecriture
+}
+
+case_ouverture_corps_publie_different_rend_1() {
+  projet
+  api GET "/repos/$repo/pulls?state=open&limit=50&page=1" '[]'
+  api POST "/repos/$repo/pulls" '{"number":8}' 201
+  api GET "/repos/$repo/pulls/8" '{"number":8,"body":"Un autre corps.\n"}'
+  ouvre "feat(1.2): essai"
+  assert_eq 1 "$rc" "le corps publié diffère du fichier : écart constaté"
+  assert_contains "son corps publié diffère du fichier" "$err" "le refus le dit"
+}
+
+case_ouverture_creation_refusee_par_la_forge_rend_2() {
+  projet
+  api GET "/repos/$repo/pulls?state=open&limit=50&page=1" '[]'
+  api POST "/repos/$repo/pulls" '{"message":"refus"}' 422
+  ouvre "feat(1.2): essai"
+  assert_eq 2 "$rc" "la forge refuse la création : l'ouverture n'a pas eu lieu, code 2"
+  assert_contains "la forge refuse la création (HTTP 422)" "$err" "le message le dit"
 }
 
 # --- llm-review : un projet qui consomme un sous-module --------------------------------------------
@@ -330,10 +433,10 @@ projet_avec_sous_module() {
   api POST "/repos/$repo/issues/$pr/comments" '{}' 201
 }
 
-revue() { # AUTHOR_LLM est transmis s'il est posé : « AUTHOR_LLM=gpt revue »
+revue() { # AUTHOR_LLM est transmis s'il est posé : « AUTHOR_LLM=gpt revue » ; $@ = arguments de plus
   # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
   run env PATH="$work/bin:$PATH" GIT_SSH_COMMAND="$work/bin/ssh" TMPDIR="$work" \
-    bash -c 'cd "$1" && shift && bash "$@"' _ "$depot" "$common/review/llm-review.sh" "$pr"
+    bash -c 'cd "$1" && shift && bash "$@"' _ "$depot" "$common/review/llm-review.sh" "$pr" "$@"
 }
 
 case_revue_exporte_le_sous_module() {
@@ -363,7 +466,7 @@ revue_refusee_sous_module_non_initialise() {
   assert_contains "sous-module commun non initialisé ($1)" "$err" "le message nomme le sous-module et la garde"
   assert_contains "git submodule update --init" "$err" "le message nomme le remède"
   [[ ! -e $work/copie-vue ]] || { echo "le relecteur a été lancé sur une copie incomplète" >&2; exit 1; }
-  aucune_ecriture
+  seule_l_alerte llm-review
 }
 
 case_revue_sous_module_non_initialise() {
@@ -451,7 +554,7 @@ case_revue_sous_module_sans_le_commit_de_la_base() {
   assert_eq 2 "$rc" "un sous-module sans le commit de la base : la revue ne peut pas conclure (messages : $err)"
   assert_contains "sous-module commun sans le commit $(git -C "$depot" rev-parse --short=7 dev:commun) de la base" "$err" "le message nomme le cas"
   [[ ! -e $work/copie-vue ]] || { echo "le relecteur a été lancé sur une copie incomplète" >&2; exit 1; }
-  aucune_ecriture
+  seule_l_alerte llm-review
 }
 
 case_revue_export_vide_du_sous_module() {
@@ -476,7 +579,7 @@ FAUX
   assert_eq 2 "$rc" "un export vide du sous-module : la revue ne peut pas conclure (messages : $err)"
   assert_contains "export du sous-module commun vide" "$err" "le message nomme le sous-module"
   [[ ! -e $work/copie-vue ]] || { echo "le relecteur a été lancé sur une copie incomplète" >&2; exit 1; }
-  aucune_ecriture
+  seule_l_alerte llm-review
 }
 
 case_revue_sous_module_sans_le_commit() {
@@ -496,7 +599,7 @@ case_revue_sous_module_sans_le_commit() {
   assert_eq 2 "$rc" "un sous-module sans le commit épinglé : la revue ne peut pas conclure"
   assert_contains "sans le commit" "$err" "le message nomme le cas"
   [[ ! -e $work/copie-vue ]] || { echo "le relecteur a été lancé sur une copie incomplète" >&2; exit 1; }
-  aucune_ecriture
+  seule_l_alerte llm-review
 }
 
 # Un faux binaire qui échoue quand ses arguments contiennent les deux motifs donnés, et délègue au vrai
@@ -509,12 +612,12 @@ faux_qui_echoue() { # $1 binaire, $2 et $3 motifs (expressions de [[ =~ ]]) cher
   chmod +x "$work/bin/$1"
 }
 
-revue_refusee() { # $1 message attendu
+revue_refusee() { # $1 message attendu ; la revue n'a pas pu conclure : 2, et l'alerte sur la PR
   revue
-  assert_eq 1 "$rc" "la revue s'arrête"
+  assert_eq 2 "$rc" "la revue ne peut pas conclure (messages : $err)"
   assert_contains "$1" "$err" "le message nomme l'étape"
   [[ ! -e $work/copie-vue ]] || { echo "le relecteur a été lancé sur une copie incomplète" >&2; exit 1; }
-  aucune_ecriture
+  seule_l_alerte llm-review
 }
 
 case_revue_arbre_du_commit_illisible() {
@@ -557,6 +660,176 @@ case_revue_diff_de_la_pr_impossible() {
   projet_avec_sous_module
   faux_qui_echoue git '^diff ' '--submodule=diff'
   revue_refusee "diff de la PR impossible"
+}
+
+# --- llm-review : trois codes. 1 = ce qu'on s'apprêtait à envoyer ou publier est refusé à raison ; 2 = la
+# revue n'a pas pu avoir lieu. Un 2 rendu une fois la PR connue est publié en alerte sur la PR.
+
+# Un relecteur simulé de rechange ; $1 = la réponse, où « @JETON@ » devient le jeton de lecture de la copie.
+faux_agy_qui_repond() {
+  printf '%s\n' "$1" > "$work/reponse-agy"
+  {
+    printf '#!/usr/bin/env bash\nw=%q\n' "$work"
+    # shellcheck disable=SC2016 # faux relecteur écrit sur le disque : ses « $ » s'y développent à l'exécution
+    printf '%s\n' 'jeton=$(sed -n "s/^# jeton-de-lecture: //p" REVIEW-DIFF.patch)' 'sed "s/@JETON@/$jeton/" "$w/reponse-agy"'
+  } > "$work/bin/agy"
+  chmod +x "$work/bin/agy"
+}
+
+revue_refus_constate() { # $1 message attendu : 1, rien publié, aucune alerte
+  revue "${@:2}"
+  assert_eq 1 "$rc" "un envoi ou une publication refusé à raison : écart constaté (messages : $err)"
+  assert_contains "$1" "$err" "le message nomme le refus"
+  aucune_ecriture
+}
+
+case_revue_garde_fou_refuse_rend_1() {
+  projet_avec_sous_module
+  : > "$work/garde-refuse"
+  revue_refus_constate "le garde-fou public/privé refuse le périmètre relu"
+  [[ ! -e $work/copie-vue ]] || { echo "le relecteur a été lancé malgré le garde-fou" >&2; exit 1; }
+}
+
+case_revue_chemin_prive_dans_la_copie_rend_1() {
+  projet_avec_sous_module
+  git -C "$depot" checkout -q "$branche"
+  mkdir -p "$depot/docs/private"
+  printf 'note\n' > "$depot/docs/private/note.md"
+  commit_all "docs: une note privée" > /dev/null
+  git -C "$depot" push -q -f "$nu" "$branche"
+  git -C "$depot" checkout -q dev
+  forge_prete
+  revue_refus_constate "la copie isolée contient docs/private"
+}
+
+case_revue_contexte_avec_motif_prive_rend_1() {
+  projet_avec_sous_module
+  printf 'précision : MOTIF-FACTICE\n' > "$work/contexte.md"
+  revue_refus_constate "le fichier de contexte contient un motif privé" --context "$work/contexte.md"
+  assert_eq "" "$(appels)" "la forge n'est pas même lue"
+}
+
+case_revue_rapport_avec_motif_prive_rend_1() {
+  projet_avec_sous_module
+  faux_agy_qui_repond "$(printf 'JETON: @JETON@\n\nCite MOTIF-FACTICE.\n\nVERDICT: NON BLOQUANT — aucune')"
+  revue_refus_constate "le rapport contient un motif privé"
+}
+
+case_revue_relecteur_introuvable_rend_2() {
+  projet_avec_sous_module
+  rm -f "$work/bin/agy"
+  # le PATH du cas sans aucun dossier qui porte un agy : celui du poste, s'il y en a un, n'est pas vu
+  local sans_agy="" dossier dossiers
+  IFS=: read -r -a dossiers <<< "$PATH"
+  for dossier in "${dossiers[@]}"; do [[ -x $dossier/agy ]] || sans_agy+="${sans_agy:+:}$dossier"; done
+  PATH=$sans_agy revue
+  assert_eq 2 "$rc" "agy introuvable : prérequis du poste, code 2"
+  assert_contains "agy est introuvable" "$err" "le message nomme l'outil"
+  assert_eq "" "$(appels)" "rien n'est lu ni publié avant de connaître la PR"
+}
+
+case_revue_pr_fermee_rend_2_et_alerte() {
+  projet_avec_sous_module
+  api GET "/repos/$repo/pulls/$pr" "$(pr_json "$(tete)" | jq -c '.state = "closed"')"
+  revue
+  assert_eq 2 "$rc" "une PR fermée : rien à relire, code 2"
+  assert_contains "la PR n° $pr n'est pas ouverte" "$err" "le message le dit"
+  seule_l_alerte llm-review
+}
+
+case_revue_rapport_sans_jeton_rend_2_et_alerte() {
+  projet_avec_sous_module
+  faux_agy_qui_repond "$(printf 'Rien à signaler.\n\nVERDICT: NON BLOQUANT — aucune')"
+  revue
+  assert_eq 2 "$rc" "un rapport qui ne cite pas le jeton : pas une revue, code 2"
+  assert_contains "ne cite pas le jeton de lecture" "$err" "le message le dit"
+  seule_l_alerte llm-review
+}
+
+case_revue_verdict_illisible_rend_2_et_alerte() {
+  projet_avec_sous_module
+  faux_agy_qui_repond "$(printf 'JETON: @JETON@\n\nRien à signaler.')"
+  revue
+  assert_eq 2 "$rc" "aucun verdict lisible : code 2"
+  assert_contains "pas un verdict lisible" "$err" "le message le dit"
+  seule_l_alerte llm-review
+}
+
+case_revue_relecteur_qui_echoue_rend_2_et_alerte() {
+  projet_avec_sous_module
+  printf '#!/bin/sh\nexit 124\n' > "$work/bin/agy"
+  revue
+  assert_eq 2 "$rc" "un relecteur qui n'aboutit pas : code 2"
+  assert_contains "le relecteur n'a pas abouti (code 124" "$err" "le message donne son code"
+  seule_l_alerte llm-review
+}
+
+case_revue_commande_shell_tentee_rend_2_et_alerte() {
+  projet_avec_sous_module
+  printf '#!/bin/sh\necho "permission denied: run_command" >&2\nexit 0\n' > "$work/bin/agy"
+  revue
+  assert_eq 2 "$rc" "une commande shell tentée par le relecteur : pas de revue, code 2"
+  assert_contains "le relecteur a tenté une commande shell" "$err" "le message le dit"
+  seule_l_alerte llm-review
+}
+
+case_revue_pr_illisible_alerte_des_la_lecture() {
+  # la forge répond 200, mais un corps que jq ne lit pas : la PR existe, l'alerte part déjà
+  projet_avec_sous_module
+  api GET "/repos/$repo/pulls/$pr" 'pas du json'
+  revue
+  assert_eq 2 "$rc" "réponse illisible : code 2"
+  assert_contains "réponse de la forge illisible pour la PR n° $pr" "$err" "le message le dit"
+  seule_l_alerte llm-review
+}
+
+# Le rapport ajouté au fichier de story, depuis la branche de la PR, qui a sa section « Revue du code ».
+sur_la_branche_avec_section() {
+  git -C "$depot" checkout -q "$branche"
+  printf '\n## Revue du code\n' >> "$depot/$stories/1-2-essai.md"
+  cp "$depot/$stories/1-2-essai.md" "$work/story-avant.md"
+}
+
+case_revue_rapport_ajoute_au_fichier_de_story() {
+  projet_avec_sous_module
+  sur_la_branche_avec_section
+  revue
+  assert_eq 0 "$rc" "la revue est publiée et le rapport ajouté (messages : $err)"
+  assert_contains "Rien à signaler." "$(cat "$depot/$stories/1-2-essai.md")" "le rapport est dans la section"
+}
+
+case_revue_comparaison_du_fichier_de_story_impossible_rend_2() {
+  projet_avec_sous_module
+  sur_la_branche_avec_section
+  faux_qui_echoue diff 'story' 'story\.md' 2
+  revue
+  assert_eq 2 "$rc" "un diff en erreur n'est jamais lu comme « rien de supprimé » (messages : $err)"
+  assert_contains "comparaison du fichier de story impossible (diff, code 2)" "$err" "le message le dit"
+  assert_eq "$(cat "$work/story-avant.md")" "$(cat "$depot/$stories/1-2-essai.md")" "le fichier de story est inchangé"
+}
+
+case_revue_mise_a_jour_qui_supprimerait_une_ligne_rend_2() {
+  # un awk qui perd la première ligne du fichier de story : la garde doit refuser d'écrire
+  projet_avec_sous_module
+  sur_la_branche_avec_section
+  local vrai
+  vrai=$(command -v awk)
+  # shellcheck disable=SC2016 # faux awk écrit sur le disque : ses « $ » s'y développent à l'exécution
+  printf '#!/usr/bin/env bash\nif [[ "$*" == *"section="* ]]; then %q "$@" | tail -n +2; else exec %q "$@"; fi\n' "$vrai" "$vrai" > "$work/bin/awk"
+  chmod +x "$work/bin/awk"
+  revue
+  assert_eq 2 "$rc" "une mise à jour qui supprimerait une ligne est refusée (messages : $err)"
+  assert_contains "la mise à jour supprimerait des lignes" "$err" "le message le dit"
+  assert_eq "$(cat "$work/story-avant.md")" "$(cat "$depot/$stories/1-2-essai.md")" "le fichier de story est inchangé"
+}
+
+case_revue_forge_qui_refuse_le_rapport_rend_2() {
+  projet_avec_sous_module
+  api POST "/repos/$repo/issues/$pr/comments" '{"message":"refus"}' 403
+  revue
+  assert_eq 2 "$rc" "la forge refuse le rapport : la revue n'est pas publiée, code 2"
+  assert_contains "la forge refuse le commentaire (HTTP 403)" "$err" "le message le dit"
+  assert_contains "alerte non publiée sur la PR n° $pr (HTTP 403)" "$err" "l'alerte non plus, et le terminal le dit"
 }
 
 # --- llm-review : la table « fournisseur de l'auteur → relecteur » (review.reviewers) -------------
@@ -648,6 +921,7 @@ readonly sans_ci=ci.workflow=.gitea/workflows/absent.yaml
 # La forge nominale, mais sans aucun statut de CI sur la tête.
 forge_amorcage() {
   forge_prete
+  api POST "/repos/$repo/issues/$pr/comments" '{}' 201
   api GET "/repos/$repo/commits/$(tete)/status" '{"state":"","statuses":[]}'
 }
 
@@ -672,7 +946,7 @@ amorcage_refuse() {
   assert_eq 2 "$rc" "copie complète impossible : l'audit ne peut pas conclure (messages : $err)"
   assert_contains "$1" "$err" "le message nomme la cause"
   [[ ! -e $work/controle-lance ]] || { echo "le contrôle a été lancé sur une copie incomplète" >&2; exit 1; }
-  aucune_ecriture
+  seule_l_alerte verify-and-merge-pr
   copie_retiree
 }
 

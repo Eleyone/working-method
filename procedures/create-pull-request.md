@@ -33,6 +33,10 @@ Le corps est passé par `jq --rawfile`, puis envoyé par `curl --data @` : guill
 
 Ce skill n'ouvre jamais de PR vers la branche de publication.
 
+## Codes de sortie
+
+`0` PR ouverte ; `1` **écart constaté** : la branche ou l'arbre ne permet pas d'ouvrir la PR (préfixe ou base refusés, modifications non commitées, branche non poussée sur ce commit, refus du garde-fou, motif privé dans le titre ou le corps, PR déjà ouverte, corps publié différent du fichier) ; `2` l'ouverture n'a pas pu être tentée (usage, prérequis, `workflow.config`, fichier d'environnement et ses variables, lecture de git ou de la forge, création refusée par la forge).
+
 ## Ce que le script vérifie
 
 Dans l'ordre. Tout refus arrête le script **avant la moindre écriture sur la forge**, sauf le dernier contrôle.

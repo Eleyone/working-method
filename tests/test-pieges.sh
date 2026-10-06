@@ -66,4 +66,27 @@ case_piege_dash_sans_sous_chaine() {
   assert_eq ab "$out" "parade : les deux premiers caractères"
 }
 
+case_piege_diff_de_busybox_unifie_par_defaut() {
+  # Le diff de BusyBox écrit le format unifié par défaut (« -a », « +c ») là où GNU diff écrit le
+  # format classique (« < a », « > c ») : chercher « ^< » ne trouve jamais rien sous BusyBox, et une
+  # garde « aucune ligne supprimée » passe sans avoir rien vu (constat de la CI, 06/10/2026).
+  local bb
+  bb=$(command -v busybox) || skip_case "busybox absent de ce poste : le piège ne se rejoue qu'avec son diff"
+  printf 'a\nb\n' > "$work/avant"
+  printf 'b\nc\n' > "$work/apres"
+  run "$bb" diff "$work/avant" "$work/apres"
+  assert_eq 1 "$rc" "piège : les fichiers diffèrent"
+  [[ $'\n'$out != *$'\n<'* ]] || { echo "piège : le diff de BusyBox écrit le format classique, le piège n'existe plus" >&2; exit 1; }
+  assert_contains $'\n-a' "$out" "piège : la ligne supprimée s'écrit « -a »"
+  # Parade : demander le format unifié, que GNU et BusyBox écrivent tous deux ; après les deux lignes
+  # d'en-tête, une ligne en « - » est une ligne supprimée.
+  local outil
+  for outil in diff "$bb diff"; do
+    # shellcheck disable=SC2086 # découpage voulu : « busybox diff »
+    run $outil -U0 "$work/avant" "$work/apres"
+    assert_eq 1 "$rc" "parade ($outil) : les fichiers diffèrent"
+    assert_eq "-a" "$(sed -n 4p <<< "$out")" "parade ($outil) : la ligne supprimée, après les en-têtes et le premier bloc"
+  done
+}
+
 run_case "$@"

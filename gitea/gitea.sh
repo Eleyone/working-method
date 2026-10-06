@@ -5,7 +5,10 @@
 # défini script_name, et chargé workflow.config (lib/config.sh). Aucune fonction n'affiche une valeur
 # de .env.
 #
-#   die <message>                  message sur la sortie d'erreur, sortie en échec
+#   die <message>                  « je n'ai pas pu » : message sur la sortie d'erreur, sortie en 2 ; une
+#                                  fois gitea_alert_pr posé, alerte publiée sur la PR (alert_pr)
+#   refuse <message>               « écart constaté » : message sur la sortie d'erreur, sortie en 1
+#   alert_pr <message>             publie l'anomalie en commentaire de la PR gitea_alert_pr, au mieux
 #   require_tools                  jq et curl présents
 #   gitea_configure                lit forge.repo dans workflow.config : le dépôt canonique
 #   load_gitea_env <fichier .env>  lit GITEA_URL, GITEA_USER, GITEA_TOKEN, juste avant le premier appel à l'API
@@ -17,6 +20,11 @@
 #   branch_base <branche> <base> <publication|none> <préfixes>
 #                                  base d'une PR ouverte depuis cette branche : 0 et la base, 1 et la raison
 #
+# Codes de sortie (convention à trois codes, procedures/shell-scripts.md) : 0 conforme ; 1 écart
+# constaté (refuse) ; 2 anomalie, je n'ai pas pu vérifier (die). Tout prérequis de cette bibliothèque
+# qui manque — jq, curl, .env, ses variables, forge.repo, le dépôt distant — sort en 2 : sans lui, rien
+# n'a été vérifié.
+#
 # Procédures (dépôt commun) : procedures/gitea-token.md, procedures/create-pull-request.md,
 # procedures/llm-review.md, procedures/verify-and-merge-pr.md
 
@@ -27,7 +35,68 @@
 gitea_canonical_repo=""
 readonly gitea_token_procedure="procedures/gitea-token.md du dépôt commun"
 
-die() { printf '%s: %b\n' "${script_name:-script}" "$*" >&2; exit 1; }
+# La PR à alerter quand le script sort en 2, et le fichier de motifs privés que l'alerte ne doit pas
+# contenir : posés par le script, une fois le jeton vérifié (check_token_owner) et la PR connue.
+gitea_alert_pr=""
+gitea_alert_patterns=""
+
+die() {
+  printf '%s: %b\n' "${script_name:-script}" "$*" >&2
+  [[ -z $gitea_alert_pr ]] || alert_pr "$*"
+  exit 2
+}
+
+refuse() { printf '%s: %b\n' "${script_name:-script}" "$*" >&2; exit 1; }
+
+# L'alerte « hors du terminal » d'un gate lancé sur le poste (décision du 06/10/2026) : le 2 est publié
+# en commentaire de la PR, que voit quiconque l'ouvre. Au mieux : une forge qui refuse, ou un message
+# qui contient un motif privé, laisse le terminal seul canal, et le dit. Le chemin du dépôt et celui du
+# dossier personnel sont masqués ; l'adresse de la forge ne figure dans aucun message (règles de la
+# procédure des scripts), et masquée si un message venait à la contenir. Jamais d'appel à die ici :
+# l'alerte ne relance pas l'alerte.
+alert_pr() { # $1 message de l'anomalie
+  local pr=$gitea_alert_pr message dir code rc=0
+  gitea_alert_pr=""
+  printf -v message '%b' "$1"
+  [[ -z ${PWD:-} || $PWD == / ]] || message=${message//"$PWD"/<dépôt>}
+  [[ -z ${HOME:-} || $HOME == / ]] || message=${message//"$HOME"/\~}
+  [[ -z ${gitea_url:-} ]] || message=${message//"${gitea_url%/}"/<adresse>}
+  dir=$(mktemp -d 2>/dev/null) || { printf '%s: alerte non publiée sur la PR n° %s (dossier temporaire impossible).\n' "${script_name:-script}" "$pr" >&2; return 0; }
+  if [[ -n $gitea_alert_patterns ]]; then
+    # motifs lus dans un fichier d'abord, puis cherchés : un échec de lecture ne passe jamais pour
+    # « aucun motif » (code de grep : 1 rien trouvé, 2 erreur)
+    rc=0
+    grep -vE '^[[:space:]]*(#|$)' "$gitea_alert_patterns" > "$dir/motifs" 2>/dev/null || rc=$?
+    if ((rc <= 1)) && [[ -s $dir/motifs ]]; then
+      printf '%s\n' "$message" > "$dir/message"
+      rc=0
+      grep -qiF -f "$dir/motifs" "$dir/message" 2>/dev/null || rc=$?
+    elif ((rc <= 1)); then
+      rc=1 # aucun motif dans le fichier : rien à retenir
+    fi
+    if ((rc != 1)); then
+      printf "%s: alerte non publiée sur la PR n° %s : le message contient un motif privé, ou n'a pas pu être vérifié.\n" \
+        "${script_name:-script}" "$pr" >&2
+      rm -rf "$dir"
+      return 0
+    fi
+  fi
+  # shellcheck disable=SC2016 # accents graves du Markdown, pas une substitution de commande
+  printf '⛔ **%s : anomalie (code 2)** — le contrôle n'"'"'a pas pu conclure : ni verdict ni fusion ne valent tant qu'"'"'il n'"'"'a pas été relancé avec succès.\n\n```\n%s\n```\n' \
+    "${script_name:-script}" "$message" > "$dir/alerte.md"
+  if ! jq -n --rawfile body "$dir/alerte.md" '{body: $body}' > "$dir/alerte.json" 2>/dev/null; then
+    printf '%s: alerte non publiée sur la PR n° %s (message illisible).\n' "${script_name:-script}" "$pr" >&2
+    rm -rf "$dir"
+    return 0
+  fi
+  code=$(gitea_api POST "/repos/$gitea_canonical_repo/issues/$pr/comments" "$dir/reponse.json" "$dir/alerte.json")
+  rm -rf "$dir"
+  if [[ $code == 201 ]]; then
+    printf '%s: alerte publiée sur la PR n° %s.\n' "${script_name:-script}" "$pr" >&2
+  else
+    printf '%s: alerte non publiée sur la PR n° %s (HTTP %s) : le terminal est le seul canal.\n' "${script_name:-script}" "$pr" "$code" >&2
+  fi
+}
 
 require_tools() {
   command -v jq >/dev/null 2>&1 || die "jq est introuvable. Installation : sudo apt install jq"

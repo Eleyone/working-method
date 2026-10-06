@@ -5,7 +5,9 @@
 #
 # Le prérequis bash est vérifié ici, en POSIX sh, AVANT la première ligne de bash : sans bash, ou avec
 # un bash plus ancien que 4.3, le script sort en 2 avec un message, jamais sur une erreur de syntaxe.
-# La suite est bin/install.bash. Procédure : procedures/adoption.md
+# La suite est bin/install.bash, dont le code de sortie est rendu tel quel : 0 installé ou déjà en place ;
+# 1 conflit constaté ; 2 installation impossible (légende complète en tête de bin/install.bash).
+# Procédure : procedures/adoption.md
 common=$(cd "$(dirname "$0")/.." && pwd) || exit 2
 # shellcheck source=../lib/require-bash.sh
 . "$common/lib/require-bash.sh"

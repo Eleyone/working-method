@@ -14,6 +14,13 @@
 # (git archive), sans .git, donc sans le chemin du dépôt de travail. Son rapport doit citer un jeton de
 # lecture aléatoire ; tout fichier qu'il crée, modifie ou supprime dans la copie est signalé. Il est lancé
 # sans --dangerously-skip-permissions : aucune commande shell ne lui est permise.
+#
+# Codes de sortie (convention à trois codes, procedures/shell-scripts.md) : 0 revue publiée, écrite ou
+# affichée ; 1 écart constaté sur ce qu'on s'apprêtait à envoyer ou publier — motif privé dans le fichier
+# de contexte ou dans le rapport, chemin privé dans la copie, refus du garde-fou (refuse) ; 2 la revue
+# n'a pas pu avoir lieu (die de gitea/gitea.sh) : usage, prérequis, configuration, lecture de la forge
+# ou de git, copie isolée, relecteur, rapport illisible, publication refusée. Une fois la PR lue, ce 2
+# est aussi publié en alerte sur la PR (alert_pr).
 # Procédure : procedures/llm-review.md
 set -euo pipefail
 set +x # même lancé avec bash -x, la trace s'arrête ici, avant la lecture du jeton
@@ -83,15 +90,6 @@ config_get forge_env_file forge.env-file
 readonly reviewers review_timeout review_report project_layer private_paths \
   range_exclude convention stories_dir status_file epics_file forge_base guard_command guard_patterns forge_env_file
 
-# Ce que l'outillage ne sait pas encore servir, ou que le projet a désactivé, sort ici en 2 — le code
-# d'une configuration qui ne permet pas l'action —, avant toute lecture de la forge. Les autres refus
-# du script gardent le code 1 du projet source, sauf un : la copie isolée à laquelle manquerait le code
-# d'un sous-module (die_incomplete_copy, plus bas).
-die_config() { printf '%s: %b\n' "$script_name" "$*" >&2; exit 2; }
-# Sous-module non initialisé, sans le commit épinglé, ou dont l'export est vide : la copie isolée ne
-# peut pas être construite, la revue ne peut donc pas conclure — code 2 de la convention à trois codes.
-die_incomplete_copy() { printf '%s: %b\n' "$script_name" "$*" >&2; exit 2; }
-
 # Le relecteur : l'entrée du fournisseur de l'auteur dans review.reviewers. La table est validée au
 # chargement (un relecteur du même fournisseur que l'auteur y est refusé) ; un auteur sans entrée ne
 # retombe sur aucun relecteur par défaut — la revue ne peut pas conclure, et le dit.
@@ -103,17 +101,17 @@ for entry in $reviewers; do
 done
 readonly author model covered
 [[ -n $model ]] \
-  || die_config "AUTHOR_LLM=$author : fournisseur d'auteur absent de la table review.reviewers (couverts :$covered) ; aucun relecteur n'est appelé. Nommer l'auteur par son fournisseur, ou ajouter son entrée « $author=<modèle d'un autre fournisseur> » (procedures/llm-review.md)."
+  || die "AUTHOR_LLM=$author : fournisseur d'auteur absent de la table review.reviewers (couverts :$covered) ; aucun relecteur n'est appelé. Nommer l'auteur par son fournisseur, ou ajouter son entrée « $author=<modèle d'un autre fournisseur> » (procedures/llm-review.md)."
 if [[ -n $pr && $review_report != pr-comment ]]; then
-  die_config "review.report = $review_report : rapport de revue que l'outillage ne sait pas encore écrire (story 8)."
+  die "review.report = $review_report : rapport de revue que l'outillage ne sait pas encore écrire (story 8)."
 fi
 rc=0
 convention_reason=$(sprint_convention_served "$convention") || rc=$?
-((rc != 2)) || die_config "$convention_reason"
+((rc != 2)) || die "$convention_reason"
 if [[ -n $story && $epics_file == none ]]; then
-  die_config "revue de spec désactivée (sprint.spec-source = none) : aucun texte de story à relire."
+  die "revue de spec désactivée (sprint.spec-source = none) : aucun texte de story à relire."
 fi
-[[ -s $root/$project_layer ]] || die_config "couche projet absente ou vide : $project_layer (review.project-layer)."
+[[ -s $root/$project_layer ]] || die "couche projet absente ou vide : $project_layer (review.project-layer)."
 
 gitea_configure
 check_origin
@@ -170,7 +168,7 @@ copy_manifest() { # $1 dossier, $2 fichier de sortie
 }
 
 if [[ -n $context_file ]] && contains_private "$context_file"; then
-  die "le fichier de contexte contient un motif privé (contenu masqué) : rien n'est envoyé."
+  refuse "le fichier de contexte contient un motif privé (contenu masqué) : rien n'est envoyé."
 fi
 
 # --- ce qui est relu -------------------------------------------------------------------------
@@ -180,6 +178,9 @@ if [[ -n $pr ]]; then
   check_token_owner "$tmp/user.json"
   code=$(gitea_api GET "/repos/$gitea_canonical_repo/pulls/$pr" "$tmp/pr.json")
   [[ $code == 200 ]] || die "PR n° $pr illisible (HTTP $code) : $(forge_message "$tmp/pr.json")"
+  # la PR est lue : une revue impossible, désormais, se publie aussi sur elle (alerte hors du terminal)
+  gitea_alert_pr=$pr
+  gitea_alert_patterns=$patterns_file
   pr_fields=$(jq -er '[.state, .base.ref, .head.ref, .head.sha] | @tsv' "$tmp/pr.json" 2>/dev/null) \
     || die "réponse de la forge illisible pour la PR n° $pr."
   IFS=$'\t' read -r pr_state base branch head_sha <<< "$pr_fields"
@@ -261,26 +262,26 @@ while IFS= read -r -d '' entry; do
   sub_sha=${sub_sha##* }
   sub_dir=$root/$sub_path
   sub_prefix=$(git -C "$sub_dir" rev-parse --show-prefix 2>/dev/null) \
-    || die_incomplete_copy "sous-module $sub_path non initialisé (git ne le lit pas) : $remedy"
+    || die "sous-module $sub_path non initialisé (git ne le lit pas) : $remedy"
   [[ -z $sub_prefix ]] \
-    || die_incomplete_copy "sous-module $sub_path non initialisé (son dossier relève du dépôt parent) : $remedy"
+    || die "sous-module $sub_path non initialisé (son dossier relève du dépôt parent) : $remedy"
   git -C "$sub_dir" cat-file -e "$sub_sha^{commit}" 2>/dev/null \
-    || die_incomplete_copy "sous-module $sub_path sans le commit ${sub_sha:0:7} : $remedy"
+    || die "sous-module $sub_path sans le commit ${sub_sha:0:7} : $remedy"
   mkdir -p "$copy/$sub_path" || die "création de $sub_path dans la copie isolée impossible."
   git -C "$sub_dir" archive --format=tar -o "$tmp/sous-module.tar" "$sub_sha" \
     || die "export du sous-module $sub_path impossible."
   sub_entries=$(tar -t -f "$tmp/sous-module.tar") || die "export du sous-module $sub_path illisible."
-  [[ -n $sub_entries ]] || die_incomplete_copy "export du sous-module $sub_path vide : aucun fichier au commit ${sub_sha:0:7}. $remedy"
+  [[ -n $sub_entries ]] || die "export du sous-module $sub_path vide : aucun fichier au commit ${sub_sha:0:7}. $remedy"
   tar -x -f "$tmp/sous-module.tar" -C "$copy/$sub_path" || die "export du sous-module $sub_path impossible."
 done < "$tmp/arbre"
 # .git toujours, puis les chemins privés du projet (review.private-paths)
 for private in .git $private_paths; do
-  [[ ! -e $copy/$private && ! -L $copy/$private ]] || die "la copie isolée contient $private : rien n'est envoyé."
+  [[ ! -e $copy/$private && ! -L $copy/$private ]] || refuse "la copie isolée contient $private : rien n'est envoyé."
 done
 
 if [[ -n $patterns_file ]]; then
   PRIVATE_PATTERNS_FILE=$patterns_file "$root/$guard_command" history "${audit_range[@]}" \
-    || die "le garde-fou public/privé refuse le périmètre relu : rien n'est envoyé."
+    || refuse "le garde-fou public/privé refuse le périmètre relu : rien n'est envoyé."
 fi
 
 canary=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
@@ -298,7 +299,7 @@ if [[ -n $pr ]]; then
     old_sha=${meta#:160000 160000 }
     old_sha=${old_sha%% *}
     git -C "$root/$changed_path" cat-file -e "$old_sha^{commit}" 2>/dev/null \
-      || die_incomplete_copy "sous-module $changed_path sans le commit ${old_sha:0:7} de la base : sa montée ne se lirait pas comme un diff de code. $remedy"
+      || die "sous-module $changed_path sans le commit ${old_sha:0:7} de la base : sa montée ne se lirait pas comme un diff de code. $remedy"
   done < "$tmp/diff-brut"
   printf '# jeton-de-lecture: %s\n' "$canary" > "$copy/$content_name"
   git diff --submodule=diff "$base_sha...$head_sha" >> "$copy/$content_name" || die "diff de la PR impossible."
@@ -400,7 +401,7 @@ if [[ -n $pr ]]; then
 fi
 
 if contains_private "$tmp/rapport.md"; then
-  die "le rapport contient un motif privé (contenu masqué) : rien n'est publié ni écrit."
+  refuse "le rapport contient un motif privé (contenu masqué) : rien n'est publié ni écrit."
 fi
 
 # --- publication et trace ----------------------------------------------------------------------
@@ -485,9 +486,19 @@ else
     { print; last = $0 }
     END { if (inside && !done) flush() }
   ' "$story_file" > "$tmp/story.md" || die "mise à jour du fichier de story impossible."
-  if { diff "$story_file" "$tmp/story.md" || true; } | grep -q '^<'; then
-    die "la mise à jour supprimerait des lignes de ${story_file#"$root"/} : fichier inchangé."
-  fi
+  # diff : 0 identiques, 1 différents, 2 erreur ; une erreur n'est jamais lue comme « rien de supprimé ».
+  # Format unifié demandé (-U0) : le diff de BusyBox l'écrit par défaut, si bien qu'un « ^< » du format
+  # classique n'y trouvait jamais rien (procedures/shell-scripts.md, pièges). Après les deux lignes
+  # d'en-tête, une ligne qui commence par « - » est une ligne supprimée.
+  rc=0
+  diff -U0 "$story_file" "$tmp/story.md" > "$tmp/story.diff" || rc=$?
+  ((rc <= 1)) || die "comparaison du fichier de story impossible (diff, code $rc) : ${story_file#"$root"/} inchangé."
+  diff_line="" diff_count=0
+  while IFS= read -r diff_line || [[ -n $diff_line ]]; do
+    diff_count=$((diff_count + 1))
+    ((diff_count > 2)) || continue
+    [[ $diff_line != -* ]] || die "la mise à jour supprimerait des lignes de ${story_file#"$root"/} : fichier inchangé."
+  done < "$tmp/story.diff"
   cat "$tmp/story.md" > "$story_file"
   printf '%s: rapport ajouté à %s, section « %s ».\n' "$script_name" "${story_file#"$root"/}" "${section#\#\# }" >&2
 fi

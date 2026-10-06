@@ -139,6 +139,12 @@ Dans l'ordre. Tout refus avant la relecture n'envoie rien au relecteur ; tout re
 - Le diff part vers un service externe : c'est acceptable pour un dépôt dont le contenu versionné est public, ou dont le responsable l'a accepté ; c'est au projet de le décider, et à son garde-fou d'arrêter ce qui ne doit pas partir.
 - Le jeton Gitea n'est jamais transmis au relecteur ; il n'est jamais affiché, et la trace du shell reste coupée (`gitea-token.md`).
 
+## Codes de sortie
+
+`0` revue publiée (ou rapport écrit, ou affiché) ; `1` **écart constaté** sur ce qu'on s'apprêtait à envoyer ou publier, refusé à raison — motif privé dans le fichier de contexte ou dans le rapport, chemin privé (ou `.git`) dans la copie isolée, refus du garde-fou ; `2` **la revue n'a pas pu avoir lieu** — usage, prérequis du poste (`agy`, `timeout`, `jq`, `curl`), configuration, fichier d'environnement et ses variables, lecture de la forge ou de git, plage, suivi de sprint, construction de la copie isolée, relecteur sans réponse ou qui tente une commande shell, rapport sans jeton ou sans verdict lisible, publication refusée. Un verdict `block` n'est pas un code de sortie : la revue a eu lieu, elle sort en `0`.
+
+Une fois la PR lue, un `2` est aussi publié en **alerte sur la PR** (`alert_pr`, `shell-scripts.md`, § *Codes de sortie*), que voit quiconque l'ouvre ; si la forge le refuse, le terminal le dit et reste le seul canal. L'alerte n'est pas un rapport : elle ne commence pas par `llm-review sha=`, et `verify-and-merge-pr` ne la lit pas.
+
 ## En cas d'échec
 
 - **Refus avant la relecture** : rien n'est envoyé. Corriger la cause indiquée, puis relancer.

@@ -123,4 +123,49 @@ case_fichier_d_environnement_lu_jusqu_au_bout() {
   aucun_appel
 }
 
+# --- create-pull-request : 1 = la branche ou l'arbre ne permet pas d'ouvrir la PR (écart constaté) ;
+# 2 = l'ouverture n'a pas pu être tentée (usage, prérequis, forge illisible)
+
+projet_pr() { # un projet sans garde-fou, commité, avec un corps de PR
+  projet guard.command=none guard.patterns-file=none
+  commit_all "le projet" > /dev/null
+  printf 'corps\n' > "$work/corps.md"
+}
+
+case_ouverture_branche_sans_prefixe_admis_rend_1() {
+  projet_pr
+  git -C "$work/depot" checkout -q -b essai/x
+  lance gitea/create-pull-request.sh --title essai --body-file "$work/corps.md"
+  assert_eq 1 "$rc" "une branche au préfixe non déclaré : écart constaté"
+  assert_contains "préfixe de branche refusé : essai/x" "$err" "le refus le dit"
+  aucun_appel
+}
+
+case_ouverture_avec_modifications_non_commitees_rend_1() {
+  projet_pr
+  printf 'brouillon\n' > "$work/depot/brouillon.txt"
+  lance gitea/create-pull-request.sh --title essai --body-file "$work/corps.md"
+  assert_eq 1 "$rc" "un arbre modifié : écart constaté"
+  assert_contains "modifications non commitées" "$err" "le refus le dit"
+  aucun_appel
+}
+
+case_ouverture_sans_titre_rend_2() {
+  projet_pr
+  lance gitea/create-pull-request.sh --body-file "$work/corps.md"
+  assert_eq 2 "$rc" "sans titre, rien n'est tenté"
+  assert_contains "titre manquant" "$err" "le refus le dit"
+  aucun_appel
+}
+
+case_ouverture_base_illisible_sur_la_forge_rend_2() {
+  projet_pr
+  # shellcheck disable=SC2016 # script passé à un autre shell : ses « $ » s'y développent, pas ici
+  run env PATH="$work/bouchons:$PATH" GIT_SSH_COMMAND=false bash -c 'cd "$1" && shift && bash "$@"' _ "$work/depot" \
+    "$common/gitea/create-pull-request.sh" --title essai --body-file "$work/corps.md"
+  assert_eq 2 "$rc" "la base illisible sur la forge : l'ouverture n'a pas pu être tentée ($err)"
+  assert_contains "lecture de la branche dev sur la forge impossible" "$err" "le message nomme l'étape"
+  aucun_appel
+}
+
 run_case "$@"

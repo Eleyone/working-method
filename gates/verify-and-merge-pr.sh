@@ -6,7 +6,9 @@
 #   verify-and-merge-pr.sh <numéro de PR> --merge   fusion en squash, seulement si tous les verrous passent
 #
 # Code de sortie : 0 tous les verrous passent (fusion faite avec --merge) ; 1 au moins un verrou bloque ;
-# 2 audit impossible, workflow.config refusé compris. Aucune option --force : force_merge et
+# 2 audit impossible, workflow.config refusé compris (die de gitea/gitea.sh) ; une fois la PR lue, ce 2
+# est aussi publié en alerte sur la PR (alert_pr), le terminal restant le seul canal si la forge le
+# refuse. Aucune option --force : force_merge et
 # merge_when_checks_succeed ne sont jamais envoyés. Le script lit les objets git et l'API, et n'écrit
 # jamais dans l'arbre de travail. Un verrou désactivé dans workflow.config s'affiche « inactif » : il
 # ne bloque pas, et il ne se fait pas passer pour vert.
@@ -24,7 +26,6 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "$script_dir/../lib/sprint.sh"
 # shellcheck source=merge-gates.sh
 . "$script_dir/merge-gates.sh"
-die() { printf '%s: %b\n' "$script_name" "$*" >&2; exit 2; } # audit impossible : code 2
 
 readonly max_timeline_pages=100
 readonly usage="usage : verify-and-merge-pr.sh <numéro de PR> [--merge]"
@@ -109,6 +110,9 @@ read_pr() { # $1 fichier de réponse
   [[ $code == 200 ]] || die "PR n° $pr illisible (HTTP $code) : $(forge_message "$1")"
 }
 read_pr "$tmp/pr.json"
+# la PR est lue : un audit impossible, désormais, se publie aussi sur elle (alerte hors du terminal)
+gitea_alert_pr=$pr
+gitea_alert_patterns=$patterns_file
 fields=$(jq -er '[.state, (.draft | tostring), (.mergeable | tostring), (.merged | tostring), .base.ref, .head.ref, .head.sha] | @tsv' "$tmp/pr.json" 2>/dev/null) \
   || die "réponse de la forge illisible pour la PR n° $pr."
 IFS=$'\t' read -r state draft mergeable merged base branch head_sha <<< "$fields"

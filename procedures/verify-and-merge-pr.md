@@ -18,7 +18,7 @@ Aucune fusion ne contourne la revue, le garde-fou ou le flux linéaire. `gates/v
 .working-method/gates/verify-and-merge-pr.sh <numéro de PR> --merge   # fusion, seulement si tous les verrous passent
 ```
 
-Code de sortie : `0` tous les verrous passent (et, avec `--merge`, la PR est fusionnée) ; `1` au moins un verrou bloque, rien n'est fusionné ; `2` audit impossible (usage, `jq` absent, `workflow.config` refusé, valeur que l'outillage ne sait pas encore servir, fichier d'environnement absent, garde-fou absent, fichier de motifs absent ou sans motif, dépôt distant qui n'est pas `forge.repo`, forge injoignable, réponse illisible, branche qui a bougé, copie complète de la tête impossible pour le substitut d'amorçage).
+Code de sortie : `0` tous les verrous passent (et, avec `--merge`, la PR est fusionnée) ; `1` au moins un verrou bloque, rien n'est fusionné ; `2` audit impossible (usage, `jq` absent, `workflow.config` refusé, valeur que l'outillage ne sait pas encore servir, fichier d'environnement absent, garde-fou absent, fichier de motifs absent ou sans motif, dépôt distant qui n'est pas `forge.repo`, forge injoignable, réponse illisible, branche qui a bougé, copie complète de la tête impossible pour le substitut d'amorçage). Une fois la PR lue, un `2` est aussi publié en **alerte sur la PR** (`alert_pr`, `shell-scripts.md`, § *Codes de sortie*) : un commentaire « verify-and-merge-pr : anomalie (code 2) » avec le message ; si la forge le refuse, le terminal le dit et reste le seul canal.
 
 Il n'existe aucune option `--force`, et le script n'envoie jamais `force_merge` ni `merge_when_checks_succeed`. Il lit les objets git et l'API, et n'écrit jamais dans l'arbre de travail.
 
