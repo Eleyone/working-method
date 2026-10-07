@@ -101,7 +101,7 @@ générés : ni espace en tête ou en fin, ni caractère de contrôle, ni aucun 
 
 ```ini
 [review]
-	reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-4-6-thinking gpt=claude-opus-4-6-thinking
+	reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-5-5-high gpt=claude-opus-5-5-high
 ```
 
 - Une entrée par **fournisseur d'auteur**, `auteur=modèle`. L'auteur est nommé par son fournisseur,
@@ -208,7 +208,7 @@ ce soit, est refusée avec la forme qui la remplace :
 | Schéma 2 | Schéma 3 |
 |---|---|
 | `schema = 2` | `schema = 3` |
-| `reviewer-for-claude = gemini-3.1-pro-high`<br>`reviewer-for-gemini = claude-opus-4-6-thinking` | `reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-4-6-thinking` (et toute autre entrée utile, `gpt=…` par exemple) |
+| `reviewer-for-claude = gemini-3.1-pro-high`<br>`reviewer-for-gemini = claude-opus-4-6-thinking` | `reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-5-5-high` (et toute autre entrée utile, `gpt=…` par exemple) |
 
 Depuis le schéma 1, ajouter aussi les trois champs `bmad.*`.
 

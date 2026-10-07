@@ -18,6 +18,8 @@ Le dépôt commun publie `renovate/default.json`, un preset que chaque projet **
 
 `local>` désigne un dépôt de la même forge que le projet ; `//renovate/default` le fichier `renovate/default.json` de ce dépôt.
 
+⛔ **Le projet doit être nommé au lanceur de Renovate.** Sur la forge, Renovate tourne sans découverte automatique : il ne parcourt que la liste `RENOVATE_REPOSITORIES` du workflow qui le lance, dans le dépôt qui le porte, et son compte doit pouvoir lire le projet (dépôt privé : le compte du robot y est ajouté). Un `renovate.json` posé dans un projet absent de cette liste n'est jamais lu, sans aucun message (constat de la troisième adoption, calculette#outillage-16).
+
 ⛔ **Une PR de montée sans job lancé est un échec, pas un succès** (AC 10 de la story outillage-14) : après l'adoption, faire ouvrir une PR de montée du sous-module par Renovate sur une branche d'essai, et vérifier **sur le run** que la CI du projet a démarré et que ses gates ont tourné.
 
 ⛔ Renovate lit `renovate.json` sur la **branche par défaut** du projet : elle doit être sa branche d'intégration (`adoption.md`, étape 0), sans quoi une modification de la configuration attend une publication pour agir.

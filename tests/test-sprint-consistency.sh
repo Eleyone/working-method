@@ -324,6 +324,21 @@ case_sprint_keyed_coherent() {
   assert_contains "cohérent dans l'arbre de travail (3 stories, 1 epics, 2 fichiers de story, 1 alias, 0 question(s) ouverte(s))" "$out" "les comptes"
 }
 
+case_sprint_keyed_plus_petit_suivi_valide() {
+  # L'exemple de procedures/sprint-consistency.md (« Un premier suivi ») : un seul epic, aucune story,
+  # aucun fichier de story ; et la même section vide reste refusée.
+  new_repo
+  mkdir -p "$work/depot/$art"
+  printf 'development_status:\n  epic-outillage: backlog\n' > "$work/depot/$art/sprint-status.yaml"
+  write_workflow_config "$work/depot" workflow.schema=4 sprint.convention=keyed "sprint.non-story-files=deferred-work spec-*"
+  run controle
+  assert_eq 0 "$rc" "le plus petit suivi de la procédure passe (messages : $err$out)"
+  assert_contains "(0 stories, 1 epics, 0 fichiers de story, 0 alias" "$out" "les comptes"
+  printf 'development_status:\n' > "$work/depot/$art/sprint-status.yaml"
+  run controle
+  assert_eq 2 "$rc" "une section vide n'est jamais une cohérence"
+}
+
 case_sprint_keyed_lit_un_commit() {
   depot_keyed
   local sha

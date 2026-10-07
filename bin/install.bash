@@ -237,6 +237,37 @@ while IFS= read -r path; do
   [[ -n $path ]] || continue
   conflicts+=("$path : suivi par git, alors qu'il dépend de $user_file : le retirer de l'index (git rm --cached) et l'ignorer")
 done <<< "$tracked"
+# Les restes d'une méthode copiée (procedures/bmad.md, « Passer un projet sur le BMAD du sous-module »).
+# Une copie qui a un équivalent dans le plan est déjà un conflit, plus haut ; celle qui n'en a pas — un
+# skill retiré en amont depuis la version copiée (bmad-agent-tech-writer de BMAD 6.6), un dossier de
+# méthode d'une version antérieure (_bmad/tea/workflows), un manifeste de l'ancien installeur — passait
+# en silence, et restait chargeable par les agents à côté de la méthode du sous-module (constat de la
+# troisième adoption, calculette#outillage-16). Seuls sont visés : les entrées « bmad-* » des dossiers
+# de skills qui ne sont pas des liens, tout ce qui n'est ni un lien ni config.yaml dans le dossier d'un
+# module de l'union, et tout ce qui n'est pas le catalogue généré dans _bmad/_config/. Un skill du
+# projet (sans préfixe bmad-), _bmad/custom/ et _bmad/render/ ne sont jamais concernés.
+shopt -s nullglob dotglob
+for dir in $skill_dirs; do
+  [[ -d $dir ]] || continue
+  for path in "$dir"/bmad-*; do
+    [[ -z ${planned[$path]+x} && ! -L $path ]] || continue
+    conflicts+=("$path : copie locale d'un skill BMAD, sans équivalent dans la méthode du sous-module : la supprimer (procedures/bmad.md)")
+  done
+done
+for module in $bmad_declared_modules; do
+  [[ -d _bmad/$module && ! -L _bmad/$module ]] || continue
+  for path in "_bmad/$module"/*; do
+    [[ -z ${planned[$path]+x} && ! -L $path && $path != "_bmad/$module/config.yaml" ]] || continue
+    conflicts+=("$path : reste de la méthode BMAD copiée (ni un lien vers le sous-module, ni la configuration générée) : le supprimer (procedures/bmad.md)")
+  done
+done
+if [[ -d _bmad/_config && ! -L _bmad/_config ]]; then
+  for path in _bmad/_config/*; do
+    [[ $path != _bmad/_config/bmad-help.csv ]] || continue
+    conflicts+=("$path : reste de l'installeur BMAD (seul le catalogue généré, bmad-help.csv, vit dans _bmad/_config/) : le supprimer (procedures/bmad.md)")
+  done
+fi
+shopt -u nullglob dotglob
 if ((${#conflicts[@]})); then
   printf "%s: %s conflit(s), rien n’est écrit :\n" "$script_name" "${#conflicts[@]}" >&2
   printf '  - %s\n' "${conflicts[@]}" >&2

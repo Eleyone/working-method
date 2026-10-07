@@ -59,7 +59,7 @@
 	# table « fournisseur de l'auteur → relecteur » : une entrée « auteur=modèle » par fournisseur d'auteur
 	# (claude, gemini, gpt…), le modèle pris dans « agy models » et d'un AUTRE fournisseur (premier segment
 	# de son nom) ; un auteur sans entrée fait sortir la revue en 2, sans relecteur par défaut
-	reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-4-6-thinking gpt=claude-opus-4-6-thinking
+	reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-5-5-high gpt=claude-opus-5-5-high
 	# délai maximal de la relecture, en secondes
 	timeout = 900
 	# fragment de consigne propre au projet : description, contexte, méthode de revue, contrôles

@@ -261,6 +261,49 @@ case_skill_bmad_existant_est_un_conflit() {
   [[ ! -e $work/depot/_bmad/config.toml ]] || { echo "configuration écrite malgré le conflit" >&2; exit 1; }
 }
 
+case_copie_bmad_sans_equivalent_est_un_conflit() {
+  # Le cas de la troisième adoption (calculette#outillage-16) : un skill retiré en amont depuis la
+  # version copiée n'a pas de lien dans le plan ; sans la garde, il restait chargeable, en silence.
+  projet
+  mkdir -p "$work/depot/.agents/skills/bmad-agent-tech-writer" "$work/depot/.claude/skills/mon-skill"
+  printf 'copie de BMAD 6.6\n' > "$work/depot/.agents/skills/bmad-agent-tech-writer/SKILL.md"
+  printf 'skill du projet\n' > "$work/depot/.claude/skills/mon-skill/SKILL.md"
+  installe
+  assert_eq 1 "$rc" "une copie de BMAD sans équivalent dans la méthode est un conflit"
+  assert_contains ".agents/skills/bmad-agent-tech-writer : copie locale d'un skill BMAD, sans équivalent" "$err" "le conflit est nommé"
+  [[ $err != *mon-skill* ]] || { echo "un skill du projet, sans préfixe bmad-, n'est jamais visé : $err" >&2; exit 1; }
+  [[ ! -e $work/depot/_bmad/config.toml && ! -e $work/depot/.claude/skills/bmad-help ]] \
+    || { echo "copie sans équivalent : bin/install a écrit malgré le refus" >&2; exit 1; }
+  rm -rf "$work/depot/.agents/skills/bmad-agent-tech-writer"
+  installe
+  assert_eq 0 "$rc" "la copie supprimée, l'installation passe, et le skill du projet reste (messages : $err)"
+  assert_eq "skill du projet" "$(cat "$work/depot/.claude/skills/mon-skill/SKILL.md")" "le skill du projet est intact"
+}
+
+case_reste_de_methode_dans_un_module_est_un_conflit() {
+  projet
+  mkdir -p "$work/depot/_bmad/tea/workflows/testarch" "$work/depot/_bmad/cis"
+  printf 'méthode tea 1.15\n' > "$work/depot/_bmad/tea/workflows/testarch/README.md"
+  printf 'copie\n' > "$work/depot/_bmad/cis/module-help.csv"
+  installe
+  assert_eq 1 "$rc" "un reste de méthode dans le dossier d'un module est un conflit"
+  assert_contains "_bmad/tea/workflows : reste de la méthode BMAD copiée" "$err" "le reste d'un module activé est nommé"
+  assert_contains "_bmad/cis/module-help.csv : reste de la méthode BMAD copiée" "$err" "et celui d'un module de l'union non activé"
+  rien_d_ecrit "reste de méthode"
+}
+
+case_reste_de_l_installeur_dans_config_est_un_conflit() {
+  projet
+  mkdir -p "$work/depot/_bmad/_config"
+  printf 'installation: {version: 6.6.0}\n' > "$work/depot/_bmad/_config/manifest.yaml"
+  printf 'a,b\n' > "$work/depot/_bmad/_config/.files-manifest.csv"
+  installe
+  assert_eq 1 "$rc" "un manifeste de l'ancien installeur est un conflit"
+  assert_contains "_bmad/_config/manifest.yaml : reste de l'installeur BMAD" "$err" "le manifeste est nommé"
+  assert_contains "_bmad/_config/.files-manifest.csv : reste de l'installeur BMAD" "$err" "un fichier caché aussi"
+  rien_d_ecrit "reste de l'installeur"
+}
+
 case_parents_et_fichiers_generes_en_conflit() {
   # Chaque garde du plan, avant toute écriture : rien n'est écrit, et le conflit est nommé.
   local sous_module="$work/depot/outils/commun" cas

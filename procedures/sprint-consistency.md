@@ -69,6 +69,18 @@ diffère du suivi ; avec `--merge <clé>`, la story absente du suivi, pas à `do
 story. ⚠️ Une entrée du suivi **sans fichier** n'est pas un écart : le suivi d'origine (`calculette#outillage-5`) en
 compte des dizaines, écrites avant les fichiers de story.
 
+**Un premier suivi, pour un projet qui n'en a pas** (troisième adoption, calculette#outillage-16) : le
+contrôle exige une section `development_status` non vide, et rien d'autre. Le plus petit suivi valide
+porte un epic, et s'ajoute dans la PR d'adoption (exemption d'amorçage du verrou de suivi,
+`verify-and-merge-pr.md`) :
+
+```yaml
+development_status:
+  epic-outillage: backlog
+```
+
+Les stories s'y ajoutent ensuite, une ligne par story, dans la PR de chacune.
+
 **La story d'une branche** (`verify-and-merge-pr`, `llm-review`) : le nom de branche, préfixe ôté
 (`feat/outillage-4-x` → `outillage-4-x`) ou recollé (`fix/plafond` → `fix-plafond`), résolu comme un nom
 de fichier. Une seule forme doit aboutir ; aucune : contrôle global ; deux : ambiguïté.

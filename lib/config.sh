@@ -93,8 +93,8 @@ declare -gA config_since_schema=(
 # Les champs retirés, et ce qui les remplace : présents, ils font refuser le fichier avec la nouvelle
 # forme, quel que soit le schéma déclaré — jamais une clé ignorée en silence.
 declare -gA config_removed=(
-  [review.reviewer-for-claude]="retiré au schéma 3 : la table review.reviewers le remplace, une entrée « auteur=modèle » par fournisseur d'auteur (« reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-4-6-thinking »)"
-  [review.reviewer-for-gemini]="retiré au schéma 3 : la table review.reviewers le remplace, une entrée « auteur=modèle » par fournisseur d'auteur (« reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-4-6-thinking »)"
+  [review.reviewer-for-claude]="retiré au schéma 3 : la table review.reviewers le remplace, une entrée « auteur=modèle » par fournisseur d'auteur (« reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-5-5-high »)"
+  [review.reviewer-for-gemini]="retiré au schéma 3 : la table review.reviewers le remplace, une entrée « auteur=modèle » par fournisseur d'auteur (« reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-5-5-high »)"
 )
 declare -gA config_values=()
 config_loaded=""

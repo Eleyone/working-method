@@ -18,13 +18,15 @@ Le relecteur vient toujours d'un autre fournisseur que l'auteur. Les modèles so
 - ⛔ Un auteur **sans entrée** fait sortir la revue en code `2`, **avant tout appel** au relecteur ni à la forge : il n'existe pas de relecteur par défaut. Le message nomme les fournisseurs couverts. Pour un nouveau fournisseur, on ajoute une entrée à la table — jamais du code.
 - ⛔ La table elle-même refuse (code `2`, au chargement) une entrée dont le relecteur est du même fournisseur que l'auteur : le fournisseur d'un modèle est le premier segment de son nom.
 
-Exemple (valeurs du projet source, relevées le 14/09/2026, `agy` 1.2.2, et entrée GPT ajoutée le 05/10/2026) :
+Exemple (valeurs du projet source relevées le 14/09/2026, `agy` 1.2.2, entrée GPT ajoutée le 05/10/2026, relecteur Claude remplacé le 07/10/2026) :
 
 | Auteur (`AUTHOR_LLM`) | Entrée de la table | Relecteur |
 |---|---|---|
 | `claude` (défaut) | `claude=gemini-3.1-pro-high` | un modèle Gemini |
-| `gemini` | `gemini=claude-opus-4-6-thinking` | un modèle Claude |
-| `gpt` | `gpt=claude-opus-4-6-thinking` | un modèle Claude |
+| `gemini` | `gemini=claude-opus-5-5-high` | un modèle Claude |
+| `gpt` | `gpt=claude-opus-5-5-high` | un modèle Claude |
+
+⚠️ **Un modèle disparaît de `agy models` sans prévenir.** `claude-opus-4-6-thinking`, relecteur Claude de l'exemple d'origine, n'y figurait plus au relevé du 05/10/2026 : une revue d'un auteur Gemini ou GPT échouait alors sans verdict, donc sans fusion. Avant d'écrire ou de monter une table, la relire contre `agy models` (calculette#outillage-16).
 
 Le délai de la relecture est `review.timeout`, en secondes ; `agy` rend la main une minute avant.
 

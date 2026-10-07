@@ -47,6 +47,8 @@ git submodule add <adresse du dépôt commun> .working-method
 - ⛔ Aucune valeur par défaut : le fichier est complet, ou il est refusé.
 - Une fonction que le projet n'a pas se désactive par `none`, et l'outil le dit.
 - Écrire aussi la **couche projet** de la revue (`review.project-layer`) : description, contexte, méthode de revue, contrôles propres (`llm-review.md`).
+- **Le fichier des secrets du poste** (`forge.env-file`) doit être ignoré par git **et** exclu des images. Un projet qui **versionne** `.env` (convention de Symfony : valeurs de développement) en nomme un autre, déjà ignoré et exclu — `.env.local` par exemple —, et ne met pas `.env` dans `review.private-paths` : un chemin suivi est dans toute copie relue, et la revue serait refusée à chaque fois (constat de la troisième adoption, calculette#outillage-16).
+- Ignorer `.pr-body.md` (corps de PR de `create-pull-request`, réécrit à chaque PR), à côté des fichiers générés de BMAD (étape 3).
 
 ## 3. Lancer `bin/install`
 
@@ -57,7 +59,7 @@ git submodule add <adresse du dépôt commun> .working-method
 Il vérifie bash, valide `workflow.config`, vérifie BMAD (version, modules, `_bmad/config.user.toml`), puis pose `.working-method` (si besoin), un lien par skill commun et par skill BMAD des modules activés dans chaque dossier de `agents.skill-dirs`, la méthode BMAD dans `_bmad/` par liens, et génère la configuration BMAD (`bmad.md`). Il ne remplace rien, sauf la configuration générée — et il le signale.
 
 - **Conflit** (code `1`, aucun lien posé) : le projet a déjà un skill du même nom. **Choisir et écrire** lequel sert — jamais deux skills homonymes qui se masquent. Si c'est le skill commun, retirer celui du projet dans la même PR, puis relancer ; si c'est celui du projet, `bin/install` refusera tant qu'il porte ce nom : la décision et sa mise en œuvre (renommer le skill du projet, par exemple) s'écrivent dans la story d'adoption.
-- **BMAD** (`bmad.md`, « Passer un projet sur le BMAD du sous-module ») : les copies locales de BMAD (skills `bmad-*` de chaque dossier d'outil, `_bmad/scripts`, `_bmad/<module>/module-help.csv`, `_bmad/_config/`) sont **supprimées dans la même PR** ; sinon chacune est un conflit. Écrire `_bmad/config.user.toml` (couche utilisatrice, jamais écrite par `bin/install`) et ignorer `_bmad/*/config.yaml` (générés, non versionnés) avant de lancer `bin/install`. ⛔ L'installeur BMAD ne se lance **jamais** dans le projet : il écrirait à travers les liens, dans le sous-module.
+- **BMAD** (`bmad.md`, « Passer un projet sur le BMAD du sous-module ») : les copies locales de BMAD (skills `bmad-*` de chaque dossier d'outil, `_bmad/scripts`, tout le contenu de `_bmad/<module>/`, `_bmad/_config/`) sont **supprimées dans la même PR** ; sinon chacune est un conflit — y compris une copie **sans équivalent** dans la méthode du sous-module (un skill retiré en amont depuis la version copiée, un dossier de méthode d'une version antérieure, un manifeste de l'ancien installeur). Un installeur BMAD récent (6.6 et plus) écrit aussi `_bmad/config.toml`, que `bin/install` régénère, et `_bmad/config.user.toml` : s'il est suivi par git, il en sort (`git rm --cached`) et reste sur le poste comme couche utilisatrice. Écrire `_bmad/config.user.toml` (couche utilisatrice, jamais écrite par `bin/install`) et ignorer `_bmad/*/config.yaml` (générés, non versionnés) avant de lancer `bin/install`. ⛔ L'installeur BMAD ne se lance **jamais** dans le projet : il écrirait à travers les liens, dans le sous-module.
 - **Skills homonymes dont le script commun ne sert pas encore le projet** (constaté à la deuxième adoption : une convention de suivi de sprint, ou une forme de rapport de revue, que l'outillage commun refuse en `2`). Le projet garde ses scripts et **renomme ses skills**, avec un préfixe propre au projet. Le skill commun reste relié et refuse en `2` ; l'`AGENTS.md` du projet dit lequel sert.
 - **Réglages propres à un module BMAD** (par exemple les chemins d'artefacts ou le cadre de test d'un module de test) : ils vont dans les surcharges `[module "<nom>"]` de `workflow.config` (`workflow-config.md`, « Surcharges des modules BMAD »), jamais dans une édition du `config.yaml` généré.
 - **Un script du projet qui recopie ses skills d'un dossier d'outil à l'autre doit ignorer les liens.** Sinon il remplace un lien par une copie, que `bin/install` refuse ensuite comme un conflit. Un dossier de skills qui est lui-même un lien vers le dossier d'un autre outil est accepté.
@@ -84,14 +86,27 @@ Il vérifie bash, valide `workflow.config`, vérifie BMAD (version, modules, `_b
 
   ⚠️ Renovate lit cette configuration sur la branche par défaut : l'étape 0 doit être faite, sinon le `renovate.json` de l'adoption n'agit qu'après une publication.
 
+  ⚠️ **Un `renovate.json` ne suffit pas à faire servir le projet** : Renovate ne parcourt que les dépôts que son lanceur lui nomme (`RENOVATE_REPOSITORIES`, sans découverte automatique), et son compte doit pouvoir lire le projet. Ajouter le projet à cette liste, dans le dépôt qui porte le workflow de Renovate, et donner l'accès au compte du robot, sont deux gestes de l'adoption ; sans eux, aucune PR de montée n'est jamais ouverte (`renovate.md`).
+
 ## 6. `AGENTS.md`
 
-Le bloc commun vit dans `.working-method/agents/AGENTS.common.md`. L'`AGENTS.md` du projet y renvoie en tête, et ne garde que ce qui est propre au projet. Le bloc est écrit **en français** (décision d'Arnaud du 04/10/2026) ; les commandes, les chemins et les identifiants y restent tels quels. La forme définitive de l'inclusion (renvoi ou copie vérifiée par un test) se tranche à la première adoption, et s'écrit ici.
+Le bloc commun vit dans `.working-method/agents/AGENTS.common.md`. L'`AGENTS.md` du projet y renvoie en tête, et ne garde que ce qui est propre au projet. Le bloc est écrit **en français** (décision d'Arnaud du 04/10/2026) ; les commandes, les chemins et les identifiants y restent tels quels. **Forme de l'inclusion : le renvoi.** Les trois premières adoptions l'ont toutes retenue : l'`AGENTS.md` du projet nomme `.working-method/agents/AGENTS.common.md` en tête, et dit ce qui y déroge ; aucune copie du bloc n'entre dans un projet, si bien qu'aucun test n'a à vérifier qu'elle reste fidèle.
 
 ## 7. Prouver le comportement constant
 
 Avant de supprimer les copies, rejouer `verify-and-merge-pr.sh` **en audit** sur des PR réelles du projet — au moins une conforme, une refusée par un gate, une exemptée — avec l'ancien script et avec le nouveau : même verdict, verrou par verrou. Un écart est un défaut de l'adoption, pas une amélioration.
 
+Un projet qui n'avait **aucun** gate avant l'adoption n'a rien à rejouer : la story d'adoption le dit, et la première PR fusionnée par les gates communs (la PR d'adoption elle-même, étape 9) en tient lieu.
+
 ## 8. Monter le sous-module
 
 Une montée est une PR du projet qui change le SHA du sous-module (ouverte par Renovate, ou à la main), et qui passe par les gates du projet. Si le schéma de `workflow.config` change, la PR de montée met le fichier à jour.
+
+## 9. La PR d'adoption elle-même
+
+Elle ne peut pas compter sur des gates que sa base n'a pas encore. Deux cas :
+
+- **La base a déjà ses propres gates** (deuxième adoption) : la PR est relue et fusionnée par eux, **depuis la base à jour** — le gate qui juge est celui déjà fusionné, pas le code qu'il contrôle.
+- **La base n'a aucun gate** (troisième adoption) : les scripts communs se lancent **depuis la branche de la PR**, sur le poste — `review/llm-review.sh <n>`, puis `gates/verify-and-merge-pr.sh <n> --merge`. Ce que la PR leur apporte, et que la revue lit dans le diff, est la configuration qu'ils lisent (`workflow.config`, la couche projet). Leur code doit être celui du dépôt commun déjà relu, jamais un code que la PR choisit : ⛔ **avant de les lancer**, vérifier que l'URL du sous-module dans `.gitmodules` de la PR désigne le dépôt commun, et que le commit épinglé est sur sa branche principale (`git -C .working-method merge-base --is-ancestor HEAD origin/main`, après un `fetch`). Une PR qui épinglerait un autre dépôt ou un commit hors de la branche principale ferait exécuter son propre code par le gate qui la juge.
+
+  Côté forge, ensuite : le verrou de CI juge les statuts de la tête, le workflow de contrôles arrivant avec la PR ; le verrou de suivi admet la PR qui ajoute le fichier de suivi à une base qui ne l'a pas (exemption d'amorçage, `verify-and-merge-pr.md`). La story d'adoption écrit ce chemin avant de demander la revue.

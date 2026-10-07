@@ -96,10 +96,19 @@ Dans la PR d'adoption (ou de montée) du projet :
 2. **Supprimer les copies locales** : chaque skill `bmad-*` des dossiers d'outil, `_bmad/scripts/`,
    `_bmad/<module>/module-help.csv` et ce qui l'accompagne, `_bmad/_config/` (le manifeste de
    l'installeur n'a plus d'objet : il ne tourne plus dans le projet). Une copie restante est un
-   **conflit** (`bin/install` rend `1`, rien n'est écrit).
+   **conflit** : `bin/install` rend `1` et n'écrit rien. C'est vrai aussi d'une copie **sans
+   équivalent** dans la méthode du sous-module, que `bin/install` reconnaît ainsi :
+   - dans un dossier de skills, une entrée `bmad-*` qui n'est pas un lien (un skill retiré en amont
+     depuis la version copiée, par exemple) ;
+   - dans le dossier d'un module de l'union, tout ce qui n'est ni un lien ni `config.yaml` ;
+   - dans `_bmad/_config/`, tout ce qui n'est pas `bmad-help.csv`.
+
+   Jusqu'à la troisième adoption (calculette#outillage-16), seules les copies **homonymes** d'un lien
+   attendu étaient des conflits : les autres passaient en code `0` et restaient chargeables.
 3. `_bmad/config.user.toml` : la couche utilisatrice, en `clé = "valeur"` — sans lui, `bin/install`
    rend `2` en listant les clés attendues. Il n'est pas versionné ; s'il l'était, c'est un choix du
-   projet, à écrire.
+   projet, à écrire. L'installeur BMAD 6.6 et plus l'écrit lui-même, au même format : un projet qui
+   l'avait commité le retire de l'index (`git rm --cached`) et le garde sur le poste.
 4. `.gitignore` : `/_bmad/*/config.yaml`, et `git rm --cached` des `config.yaml` suivis (un
    `config.yaml` suivi est un conflit). `/_bmad/render/` (cache) reste ignoré.
 5. `.working-method/bin/install` ; commiter les liens, `_bmad/config.toml` et
