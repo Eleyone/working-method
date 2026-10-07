@@ -37,9 +37,11 @@ avec le nom de chaque champ fautif et la raison, et l'outil sort en **code `2`**
 et l'outil qui la porte **le dit** dans sa sortie (« désactivé (… = none) ») — il ne la rend jamais
 verte en silence. Sur un champ non désactivable, `none` est une erreur de type.
 
-## Les champs — schémas 3 et 4
+## Les champs — schémas 3, 4 et 5
 
-Le lecteur lit les schémas **3** et **4** (« Changer de schéma », ci-dessous). Le schéma 4 ajoute au 3 un
+Le lecteur lit les schémas **3**, **4** et **5** (« Changer de schéma », ci-dessous). Le schéma 5 ajoute au 4
+les deux champs du verrou CI, `ci.statuses` et `ci.wait` (calculette#outillage-8) : `verify-and-merge-pr`
+les exige et refuse en `2` un fichier d'un schéma antérieur, sans repli. Le schéma 4 ajoute au 3 un
 seul champ, `sprint.non-story-files`, qu'exige la convention `keyed` : un projet `numbered` reste au
 schéma 3 sans rien changer. Par rapport au schéma 2, le 3 remplace les deux relecteurs nommés,
 `review.reviewer-for-claude` et `review.reviewer-for-gemini`, par la **table** `review.reviewers`,
@@ -49,7 +51,7 @@ BMAD du projet.
 
 | Champ | Type | Désactivable | Lu par |
 |---|---|---|---|
-| `workflow.schema` | `3` \| `4` | non | tous |
+| `workflow.schema` | `3` \| `4` \| `5` | non | tous (`verify-and-merge-pr` : `5`) |
 | `forge.repo` | `propriétaire/nom` | non | `gitea/gitea.sh` : dépôt distant vérifié, appels à l'API |
 | `forge.base` | branche (`git check-ref-format --branch`) | non | `create-pull-request`, `verify-and-merge-pr`, `llm-review` |
 | `forge.release-branch` | branche, différente de la base | **oui** | refus des PR vers elle (`create-pull-request`, `verify-and-merge-pr`) |
@@ -61,7 +63,7 @@ BMAD du projet.
 | `sprint.spec-source` | chemin | **oui** | `llm-review --story` |
 | `sprint.non-story-files` *(schéma 4)* | motifs de noms (ci-dessous) | **oui** ; `none` hors de `keyed` | `sprint-consistency` en `keyed` : fichiers `.md` du dossier des stories qui ne sont pas des stories |
 | `review.exempt-paths` | expression régulière étendue, appliquée à **chaque** chemin modifié | **oui** | `verify-and-merge-pr`, verrou de revue |
-| `review.report` | `pr-comment` \| `file` | non | `llm-review`, `verify-and-merge-pr` |
+| `review.report` | `pr-comment` (seule valeur ; `file` est retiré, calculette#outillage-8) | non | `llm-review`, `verify-and-merge-pr` |
 | `review.reviewers` *(schéma 3)* | table : entrées `auteur=modèle` séparées par une espace (ci-dessous) | non | `llm-review` : relecteur du fournisseur de l'auteur |
 | `review.timeout` | entier, en secondes | non | `llm-review` |
 | `review.project-layer` | chemin d'un fragment de consigne | non | `llm-review` |
@@ -71,6 +73,8 @@ BMAD du projet.
 | `guard.patterns-file` | chemin, passé au garde-fou par `PRIVATE_PATTERNS_FILE` | **oui** | idem |
 | `ci.workflow` | chemin du workflow qui fait foi | **oui** | `verify-and-merge-pr`, verrou de CI |
 | `ci.status-context` | nom du workflow, tel que la forge préfixe ses contextes | avec `ci.workflow` | `verify-and-merge-pr`, verrou de CI |
+| `ci.statuses` *(schéma 5)* | `context` (statuts de `ci.status-context` seuls) \| `all` (tous les statuts de la tête, ceux de `ci.status-context` compris et exigés) | avec `ci.workflow` | `verify-and-merge-pr`, verrou de CI |
+| `ci.wait` *(schéma 5)* | durée en secondes, de `0` à `99999` ; `0` : une CI en cours bloque tout de suite | avec `ci.workflow` | `verify-and-merge-pr`, verrou de CI : attente d'une CI en cours |
 | `ci.bootstrap` | `true` \| `false` | non | `verify-and-merge-pr` : règle d'amorçage |
 | `checks.command` | commande, lancée à la racine | **oui** | `verify-and-merge-pr` : substitut d'amorçage |
 | `checks.dir` | chemin | **oui** | `checks/run-checks.sh` |
@@ -149,20 +153,17 @@ projet qui en veut d'autres les **surcharge** :
 - `sprint.convention = none` exige `none` sur `sprint.status-file`, `sprint.stories-dir` et
   `sprint.spec-source` ; une convention active exige les deux chemins.
 - `guard.patterns-file = none` exige `guard.command = none` : un garde-fou sans motif ne garde rien.
-- `ci.workflow` et `ci.status-context` valent `none` ensemble, ou portent une valeur ensemble.
+- `ci.workflow` et `ci.status-context` valent `none` ensemble, ou portent une valeur ensemble ; au
+  schéma 5, `ci.statuses` et `ci.wait` aussi.
 - `forge.release-branch` diffère de `forge.base`.
 - `sprint.convention = keyed` exige le schéma 4 ; au schéma 4, `sprint.non-story-files` vaut `none` dans
   toute autre convention.
 
-### Valeurs posées pour la suite
+### Valeurs retirées
 
-Une valeur est au schéma pour qu'il ne change pas sous les projets, mais l'outillage ne sait pas encore
-la servir. Un outil qui la rencontre sort en `2` en nommant la story qui l'apportera — jamais un repli
-silencieux :
-
-| Valeur | Story |
-|---|---|
-| `review.report = file` (rapport versionné plutôt que commentaire de PR) | 8 |
+`review.report = file` (rapport de revue en fichier local) était posé pour `calculette#outillage-8`, qui
+a tranché l'inverse : le rapport est un commentaire de la PR, que le verrou de revue lit. Aucun outil
+ne sert `file`, et le lecteur le refuse comme une erreur de type, à quelque schéma que ce soit.
 
 `sprint.convention = keyed` (clés en kebab-case, bloc `aliases:`) est servie depuis
 `calculette#outillage-5` : `procedures/sprint-consistency.md`.
@@ -209,5 +210,19 @@ ce soit, est refusée avec la forme qui la remplace :
 | `schema = 2` | `schema = 3` |
 | `reviewer-for-claude = gemini-3.1-pro-high`<br>`reviewer-for-gemini = claude-opus-4-6-thinking` | `reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-4-6-thinking` (et toute autre entrée utile, `gpt=…` par exemple) |
 
-Depuis le schéma 1, ajouter aussi les trois champs `bmad.*`. La PR de montée du sous-module qui
+Depuis le schéma 1, ajouter aussi les trois champs `bmad.*`.
+
+### Du schéma 3 ou 4 au schéma 5
+
+Le schéma 5 ajoute deux champs à la section `[ci]`, sans valeur implicite : chaque projet écrit les
+siens. Un fichier au schéma 3 ou 4 reste lu par les autres outils, mais `verify-and-merge-pr` le refuse
+en `2` en nommant le champ qui manque. Monter au 5 : `schema = 5`, et, depuis le 3, `non-story-files =
+none` sous `[sprint]` (le champ du schéma 4).
+
+| Projet | `ci.statuses` | `ci.wait` | Verdict |
+|---|---|---|---|
+| inchangé (le verrou d'avant le schéma 5) | `context` | `0` | identique : seuls les statuts de `ci.status-context`, et une CI en cours bloque tout de suite |
+| projet source | `context` | `0` | identique ; l'agent de parité ne décide toujours pas d'une fusion |
+| `calculette` | `all` | `1200` | les statuts de tous ses workflows (audit de dépendances compris), une CI en cours attendue 20 minutes (son ancien sondage, `calculette#outillage-8`) |
+| ce dépôt | `context` | `0` | identique | La PR de montée du sous-module qui
 franchit le schéma 3 réécrit le fichier dans le même commit.

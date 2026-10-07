@@ -102,7 +102,7 @@ readonly author model covered
 [[ -n $model ]] \
   || die "AUTHOR_LLM=$author : fournisseur d'auteur absent de la table review.reviewers (couverts :$covered) ; aucun relecteur n'est appelé. Nommer l'auteur par son fournisseur, ou ajouter son entrée « $author=<modèle d'un autre fournisseur> » (procedures/llm-review.md)."
 if [[ -n $pr && $review_report != pr-comment ]]; then
-  die "review.report = $review_report : rapport de revue que l'outillage ne sait pas encore écrire (story 8)."
+  die "review.report = $review_report : seul pr-comment est écrit."
 fi
 rc=0
 convention_reason=$(sprint_convention_served "$convention") || rc=$?

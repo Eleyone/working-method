@@ -45,6 +45,12 @@ root=""
 config_project_root root || die "à lancer dans le dépôt."
 cd "$root"
 config_load "$root/workflow.config" || exit 2
+config_schema_level=""
+config_get config_schema_level workflow.schema
+# l'étendue et l'attente du verrou CI n'ont pas de valeur implicite : un fichier d'avant le schéma 5 est
+# refusé, jamais lu avec celles d'avant (procedures/workflow-config.md, « Du schéma 3 ou 4 au schéma 5 »)
+((config_schema_level >= 5)) \
+  || die "workflow.config au schéma $config_schema_level : verify-and-merge-pr exige le schéma 5 (ci.statuses, ci.wait ; procedures/workflow-config.md, « Du schéma 3 ou 4 au schéma 5 »)."
 config_get forge_base forge.base
 config_get release_branch forge.release-branch
 config_get convention sprint.convention
@@ -56,14 +62,15 @@ config_get guard_command guard.command
 config_get guard_patterns guard.patterns-file
 config_get ci_workflow ci.workflow
 config_get ci_context ci.status-context
+config_get ci_statuses ci.statuses
+config_get ci_wait ci.wait
 config_get ci_bootstrap ci.bootstrap
 config_get checks_command checks.command
 config_get forge_env_file forge.env-file
 readonly forge_base release_branch convention status_file stories_dir exempt_paths review_report \
-  guard_command guard_patterns ci_workflow ci_context ci_bootstrap checks_command forge_env_file
-# Une valeur que l'outillage ne sait pas encore servir sort en 2, en nommant la story qui l'apporte.
-[[ $review_report == pr-comment ]] \
-  || die "review.report = $review_report : rapport de revue que l'outillage ne sait pas encore lire (story 8)."
+  guard_command guard_patterns ci_workflow ci_context ci_statuses ci_wait ci_bootstrap checks_command forge_env_file
+# le lecteur n'admet que pr-comment (« file » est retiré) : une autre valeur serait une erreur du lecteur
+[[ $review_report == pr-comment ]] || die "review.report = $review_report : seul pr-comment est lu."
 rc=0
 convention_reason=$(sprint_convention_served "$convention") || rc=$?
 ((rc != 2)) || die "$convention_reason"
@@ -307,13 +314,30 @@ populate_submodules() { # $1 fichier écrit par submodule_sources
 if [[ $ci_workflow == none ]]; then
   report inactif "CI" "désactivée (ci.workflow = none) : aucun statut de CI n'est exigé — ce n'est pas une CI verte."
 else
-  code=$(gitea_api GET "/repos/$gitea_canonical_repo/commits/$head_sha/status" "$tmp/status.json")
-  [[ $code == 200 ]] || die "lecture de l'état de la CI impossible (HTTP $code) : $(forge_message "$tmp/status.json")"
   ci_on_base=0
   if git cat-file -e "$base_sha:$ci_workflow" 2>/dev/null; then ci_on_base=1; fi
-  ci_out=$(ci_gate "$tmp/status.json" "$ci_on_base" "$ci_workflow" "$ci_context") || die "état de la CI illisible."
-  ci_decision=${ci_out%%$'\t'*}
-  ci_detail=${ci_out#*$'\t'}
+  # Une CI en cours est relue toutes les 30 s pendant ci.wait secondes au plus, le dernier pas raccourci
+  # (ci_wait_step) ; 0 la bloque tout de suite. Une CI sans aucun statut n'est jamais « en cours » :
+  # ci_gate la bloque, rien n'est attendu (le runner coincé, calculette#outillage-8).
+  ci_waited=0
+  while :; do
+    code=$(gitea_api GET "/repos/$gitea_canonical_repo/commits/$head_sha/status" "$tmp/status.json")
+    [[ $code == 200 ]] || die "lecture de l'état de la CI impossible (HTTP $code) : $(forge_message "$tmp/status.json")"
+    ci_out=$(ci_gate "$tmp/status.json" "$ci_on_base" "$ci_workflow" "$ci_context" "$ci_statuses") || die "état de la CI illisible."
+    ci_decision=${ci_out%%$'\t'*}
+    ci_detail=${ci_out#*$'\t'}
+    [[ $ci_decision == en-cours ]] || break
+    ci_poll=$(ci_wait_step "$ci_waited" "$ci_wait") || die "attente de la CI indécidable (ci.wait = $ci_wait)."
+    [[ -n $ci_poll ]] || break
+    printf '%s: CI en cours sur la tête : nouvelle lecture dans %s s (%s s attendues sur %s).\n' \
+      "$script_name" "$ci_poll" "$ci_waited" "$ci_wait" >&2
+    sleep "$ci_poll"
+    ci_waited=$((ci_waited + ci_poll))
+  done
+  if [[ $ci_decision == en-cours ]]; then
+    ci_decision=bloque
+    ((ci_wait == 0)) || ci_detail="toujours en cours sur la tête après $ci_wait s : relancer l'audit quand elle est terminée."
+  fi
   if [[ $ci_decision == passe || $ci_decision == bloque ]]; then
     report "$ci_decision" "CI" "$ci_detail"
   elif [[ $ci_bootstrap != true ]]; then

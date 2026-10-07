@@ -151,9 +151,9 @@ case_config_none_desactive_et_se_lit() {
 
 case_config_types_invalides() {
   local change
-  for change in workflow.schema=5 forge.repo=sans-barre "forge.base=a..b" "forge.base=-dev" \
+  for change in workflow.schema=6 forge.repo=sans-barre "forge.base=a..b" "forge.base=-dev" \
     "forge.branch-prefixes=feat/ fix" "forge.env-file=/etc/env" "forge.env-file=../.env" \
-    "forge.env-file=a/./b" "sprint.convention=libre" review.report=courriel review.timeout=15m \
+    "forge.env-file=a/./b" "sprint.convention=libre" review.report=courriel review.report=file review.timeout=15m \
     review.timeout=0 "review.exempt-paths=(" ci.bootstrap=yes bmad.version=6.12 \
     "review.private-paths=.env  docs" "review.reviewers=claude=Gemini Pro" "ci.status-context= checks" \
     "bmad.project-name=a: b" "bmad.project-name=x\"y" "bmad.document-output-language=[fr]" \
@@ -579,6 +579,94 @@ x.md|« x.md » : motif de nom attendu
 x  y|liste de motifs attendue
 .cache|« .cache » : motif de nom attendu
 CAS
+}
+
+# --- schéma 5 : l'attente et l'étendue du verrou CI (calculette#outillage-8, V12) -------------------
+
+# Un projet au schéma 5 : $@ = changements de plus.
+schema_5_config() {
+  write_workflow_config "$work/projet" workflow.schema=5 sprint.non-story-files=none ci.statuses=context \
+    ci.wait=0 "$@"
+}
+
+case_config_schema_5_est_lu() {
+  local valeur
+  for valeur in "ci.statuses=context ci.wait=0" "ci.statuses=all ci.wait=1200" "ci.statuses=context ci.wait=99999"; do
+    # shellcheck disable=SC2086 # découpage voulu : deux changements
+    schema_5_config $valeur
+    load
+    assert_eq 0 "$rc" "schéma 5 admis : $valeur (messages : $err)"
+  done
+  config_load "$work/projet/workflow.config"
+  local statuts attente
+  config_get statuts ci.statuses
+  config_get attente ci.wait
+  assert_eq "context 99999" "$statuts $attente" "les deux champs sont rendus tels quels"
+}
+
+case_config_schema_5_exige_ses_champs() {
+  local champ
+  for champ in ci.statuses ci.wait; do
+    schema_5_config "-$champ"
+    load
+    assert_eq 2 "$rc" "$champ est requis au schéma 5 : aucune valeur par défaut"
+    assert_contains "$champ : champ absent" "$err" "le champ est nommé"
+  done
+}
+
+case_config_champs_du_schema_5_inconnus_du_schema_4() {
+  local champ
+  for champ in ci.statuses=context ci.wait=0; do
+    write_workflow_config "$work/projet" workflow.schema=4 sprint.non-story-files=none "$champ"
+    load
+    assert_eq 2 "$rc" "${champ%%=*} est inconnu du schéma 4"
+    assert_contains "${champ%%=*} : champ du schéma 5, inconnu du schéma 4" "$err" "le champ et les schémas sont nommés"
+  done
+  write_workflow_config "$work/projet" workflow.schema=4 sprint.non-story-files=none
+  load
+  assert_eq 0 "$rc" "le schéma 4 reste lu (messages : $err)"
+  config_load "$work/projet/workflow.config"
+  run config_get valeur ci.wait
+  assert_eq 2 "$rc" "ci.wait ne se lit pas dans un fichier au schéma 4"
+  assert_contains "champ « ci.wait » du schéma 5" "$err" "le schéma du champ est nommé"
+}
+
+case_config_schema_5_types_invalides() {
+  local change
+  for change in ci.statuses=tous ci.statuses=Context ci.wait=-1 ci.wait=01 ci.wait=1e3 ci.wait=20m \
+    ci.wait=100000 "ci.wait= 5"; do
+    schema_5_config "$change"
+    load
+    assert_eq 2 "$rc" "type invalide refusé : $change"
+    assert_contains "${change%%=*} :" "$err" "le champ est nommé : $change"
+    [[ $err != *inconnu* ]] || { echo "refusé pour une autre raison que le type ($change) : $err" >&2; exit 1; }
+  done
+}
+
+case_config_schema_5_ci_desactivee_ensemble() {
+  schema_5_config ci.workflow=none ci.status-context=none ci.statuses=none ci.wait=none
+  load
+  assert_eq 0 "$rc" "une CI désactivée désactive l'étendue et l'attente (messages : $err)"
+  local champ
+  for champ in ci.statuses ci.wait; do
+    schema_5_config ci.workflow=none ci.status-context=none ci.statuses=none ci.wait=none "$champ=$([[ $champ == ci.wait ]] && echo 0 || echo all)"
+    load
+    assert_eq 2 "$rc" "$champ porte une valeur alors que la CI est désactivée"
+    assert_contains "$champ : doit valoir « none » quand ci.workflow vaut « none »" "$err" "la règle est nommée"
+    schema_5_config "$champ=none"
+    load
+    assert_eq 2 "$rc" "$champ désactivé alors que la CI est active"
+    assert_contains "$champ : « none » refusé tant que ci.workflow porte une valeur" "$err" "la règle est nommée"
+  done
+}
+
+case_config_rapport_en_fichier_retire() {
+  # calculette#outillage-8 : le rapport de revue est un commentaire de PR ; « file » n'est plus servi
+  # par aucun outil, il n'est plus une valeur du schéma.
+  write_workflow_config "$work/projet" review.report=file
+  load
+  assert_eq 2 "$rc" "review.report = file est refusé"
+  assert_contains "review.report : « pr-comment » attendu" "$err" "la seule valeur servie est nommée"
 }
 
 run_case "$@"

@@ -37,11 +37,12 @@
 # Procédure : procedures/workflow-config.md
 
 # Le schéma : champ → type. Un « ? » en tête du type marque un champ désactivable par « none ».
-# Les schémas 3 et 4 sont lus (procedures/workflow-config.md, « Changer de schéma »). Le 3 remplace les
+# Les schémas 3, 4 et 5 sont lus (procedures/workflow-config.md, « Changer de schéma »). Le 3 remplace les
 # deux relecteurs nommés des schémas 1 et 2 par la table review.reviewers, ouverte à tout fournisseur. Un
 # fichier au schéma 1 ou 2 est refusé avec ce qu'il faut changer, jamais lu « au mieux » : il porterait
 # les anciennes clés, que plus aucun outil ne lit. Le 4 ajoute sprint.non-story-files, que la convention
-# keyed exige : un projet numbered reste au 3 sans rien changer.
+# keyed exige : un projet numbered reste au 3 sans rien changer. Le 5 ajoute ci.statuses et ci.wait, l'étendue
+# et l'attente du verrou CI (calculette#outillage-8) : verify-and-merge-pr les exige, aucun repli n'existe.
 declare -gA config_schema=(
   [workflow.schema]=schema
   [forge.repo]=repo
@@ -65,6 +66,8 @@ declare -gA config_schema=(
   [guard.patterns-file]=?path
   [ci.workflow]=?path
   [ci.status-context]=?text
+  [ci.statuses]=?ci-statuses
+  [ci.wait]=?seconds
   [ci.bootstrap]=boolean
   [checks.command]=?text
   [checks.dir]=?path
@@ -84,6 +87,8 @@ declare -gA config_since_schema=(
   [bmad.output-folder]=2
   [review.reviewers]=3
   [sprint.non-story-files]=4
+  [ci.statuses]=5
+  [ci.wait]=5
 )
 # Les champs retirés, et ce qui les remplace : présents, ils font refuser le fichier avec la nouvelle
 # forme, quel que soit le schéma déclaré — jamais une clé ignorée en silence.
@@ -106,14 +111,14 @@ config_check_type() {
   case $type in
     schema)
       case $value in
-        3|4) ;;
+        3|4|5) ;;
         1|2)
           local added=""
           [[ $value == 2 ]] || added=", et bmad.project-name, bmad.document-output-language, bmad.output-folder s'ajoutent"
           echo "schéma $value retiré : le schéma 3 est attendu — review.reviewer-for-claude et review.reviewer-for-gemini y sont remplacés par la table review.reviewers$added (procedures/workflow-config.md, « Changer de schéma »)"
           return 1
           ;;
-        *) echo "schéma « $value » inconnu de cet outillage (schémas lus : 3 et 4)"; return 1 ;;
+        *) echo "schéma « $value » inconnu de cet outillage (schémas lus : 3, 4 et 5)"; return 1 ;;
       esac
       ;;
     repo) [[ $value =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "« propriétaire/nom » attendu"; return 1; } ;;
@@ -144,12 +149,23 @@ config_check_type() {
       ;;
     report)
       case $value in
-        pr-comment|file) ;;
-        *) echo "« pr-comment » ou « file » attendu"; return 1 ;;
+        pr-comment) ;;
+        # « file » (rapport en fichier local) a été retiré par calculette#outillage-8 : aucun outil ne le sert
+        *) echo "« pr-comment » attendu (le rapport de revue est un commentaire de la PR ; « file » est retiré)"; return 1 ;;
       esac
       ;;
     reviewers) config_check_reviewers "$value" || return 1 ;;
     integer) [[ $value =~ ^[1-9][0-9]{0,5}$ ]] || { echo "entier positif attendu"; return 1; } ;;
+    seconds)
+      # une durée en secondes, 0 compris (0 : aucune attente) ; ni unité, ni zéro en tête, au plus 99999
+      [[ $value =~ ^(0|[1-9][0-9]{0,4})$ ]] || { echo "durée en secondes attendue (entier de 0 à 99999, sans unité)"; return 1; }
+      ;;
+    ci-statuses)
+      case $value in
+        context|all) ;;
+        *) echo "« context » (statuts de ci.status-context seuls) ou « all » (tous les statuts de la tête) attendu"; return 1 ;;
+      esac
+      ;;
     boolean)
       # « true » ou « false » seulement : git accepte aussi yes, on, 1…, que ce lecteur ne lit pas
       [[ $value == true || $value == false ]] || { echo "« true » ou « false » attendu"; return 1; }
@@ -284,7 +300,7 @@ config_load() { # $1 = fichier
   # présumé keyed.
   local level=3
   case ${values[workflow.schema]:-} in
-    1|2|4) level=${values[workflow.schema]} ;;
+    1|2|4|5) level=${values[workflow.schema]} ;;
   esac
   for key in "${!seen[@]}"; do
     if [[ -n ${config_removed[$key]+x} ]]; then
@@ -347,7 +363,11 @@ config_load() { # $1 = fichier
     if ((level >= 4)) && [[ ${values[sprint.convention]} != keyed && ${values[sprint.non-story-files]} != none ]]; then
       problems+=("sprint.non-story-files : doit valoir « none » quand sprint.convention ne vaut pas « keyed ».")
     fi
-    config_pair_rule problems values ci.workflow ci.status-context
+    if ((level >= 5)); then
+      config_pair_rule problems values ci.workflow ci.status-context ci.statuses ci.wait
+    else
+      config_pair_rule problems values ci.workflow ci.status-context
+    fi
     if [[ ${values[forge.release-branch]} == "${values[forge.base]}" ]]; then
       problems+=("forge.release-branch : identique à forge.base.")
     fi

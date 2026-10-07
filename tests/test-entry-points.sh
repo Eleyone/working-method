@@ -14,9 +14,9 @@ bouchons() { # PATH avec un curl et un agy qui notent leur appel et échouent
   done
 }
 
-projet() { # $1… = changements du workflow.config
+projet() { # $1… = changements du workflow.config ; schéma 5, qu'exige verify-and-merge-pr
   new_repo
-  write_workflow_config "$work/depot" "$@"
+  write_workflow_config "$work/depot" workflow.schema=5 sprint.non-story-files=none ci.statuses=context ci.wait=0 "$@"
   git -C "$work/depot" remote add origin "git@forge.example.invalid:Proprietaire/projet-essai.git"
   git -C "$work/depot" checkout -q -b feat/essai
   bouchons
@@ -47,7 +47,7 @@ case_config_incomplete_arrete_chaque_point_d_entree() {
 }
 
 case_convention_keyed_exige_le_schema_4() {
-  projet sprint.convention=keyed
+  projet workflow.schema=3 -sprint.non-story-files -ci.statuses -ci.wait sprint.convention=keyed
   lance gates/verify-and-merge-pr.sh 1
   assert_eq 2 "$rc" "verify-and-merge-pr refuse keyed au schéma 3"
   assert_contains "« keyed » exige le schéma 4" "$err" "en nommant le schéma"
@@ -58,21 +58,22 @@ case_convention_keyed_exige_le_schema_4() {
 }
 
 case_revue_de_spec_keyed_non_servie() {
-  projet workflow.schema=4 sprint.convention=keyed sprint.non-story-files=none
+  projet sprint.convention=keyed
   lance review/llm-review.sh --story fix-essai
   assert_eq 2 "$rc" "la revue de spec d'une story keyed sort en 2"
   assert_contains "revue de spec non servie pour la convention keyed" "$err" "et le dit"
   aucun_appel
 }
 
-case_rapport_en_fichier_pas_encore_servi() {
+case_rapport_en_fichier_retire() {
+  # calculette#outillage-8 : le rapport de revue est un commentaire de PR ; « file » n'est plus une valeur
   projet review.report=file
   lance gates/verify-and-merge-pr.sh 1
-  assert_eq 2 "$rc" "verify-and-merge-pr ne sait pas lire un rapport versionné"
-  assert_contains "story 8" "$err" "en nommant la story qui l'apportera"
+  assert_eq 2 "$rc" "verify-and-merge-pr refuse un workflow.config qui demande un rapport en fichier"
+  assert_contains "review.report : « pr-comment » attendu" "$err" "en nommant la seule valeur servie"
   lance review/llm-review.sh 1
-  assert_eq 2 "$rc" "llm-review ne sait pas écrire un rapport versionné"
-  assert_contains "story 8" "$err" "en nommant la story qui l'apportera"
+  assert_eq 2 "$rc" "llm-review le refuse aussi"
+  assert_contains "review.report : « pr-comment » attendu" "$err" "en nommant la seule valeur servie"
   aucun_appel
 }
 

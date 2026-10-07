@@ -130,11 +130,12 @@ suivi() { # $1 statut de la story 1.2 ; écrit le suivi et le fichier de story
 
 # Le projet : base dev avec sa CI, son garde-fou et son suivi ; puis la branche de la story 1.2, qui
 # change du code et passe la story à done. Le dépôt nu de la forge porte les deux branches.
-# $@ = changements du workflow.config
+# $@ = changements du workflow.config ; le projet est au schéma 5, qu'exige verify-and-merge-pr (étendue
+# et attente du verrou CI : celles d'avant le schéma 5, sauf changement)
 projet() {
   new_repo
   write_workflow_config "$depot" "forge.repo=$repo" guard.command=scripts/garde.sh guard.patterns-file=motifs.txt \
-    review.project-layer=couche.md "$@"
+    review.project-layer=couche.md workflow.schema=5 sprint.non-story-files=none ci.statuses=context ci.wait=0 "$@"
   mkdir -p "$depot/scripts" "$depot/.gitea/workflows"
   printf 'name: checks\n' > "$depot/.gitea/workflows/checks.yaml"
   printf '#!/bin/sh\n[ ! -f %q ] || { echo "refus du garde-fou"; exit 1; }\n' "$work/garde-refuse" > "$depot/scripts/garde.sh"
@@ -208,7 +209,7 @@ case_audit_pr_conforme() {
   aucune_ecriture
 }
 
-readonly keyed_config=(workflow.schema=4 sprint.convention=keyed sprint.non-story-files=deferred-work)
+readonly keyed_config=(sprint.convention=keyed sprint.non-story-files=deferred-work)
 
 case_audit_pr_keyed_conforme() {
   forme_du_suivi=keyed
@@ -302,8 +303,8 @@ case_audit_pr_exemptee() {
 }
 
 case_audit_verrous_desactives_le_disent() {
-  projet guard.command=none guard.patterns-file=none ci.workflow=none ci.status-context=none \
-    sprint.convention=none sprint.status-file=none sprint.stories-dir=none sprint.spec-source=none
+  projet guard.command=none guard.patterns-file=none ci.workflow=none ci.status-context=none ci.statuses=none \
+    ci.wait=none sprint.convention=none sprint.status-file=none sprint.stories-dir=none sprint.spec-source=none
   forge_prete
   verifie "$pr"
   assert_eq 0 "$rc" "les verrous désactivés ne bloquent pas (messages : $err)"
@@ -993,6 +994,100 @@ case_revue_anciennes_cles_rendent_2_avec_la_nouvelle_forme() {
 }
 
 # --- verify-and-merge-pr : le substitut d'amorçage ------------------------------------------------
+# --- verrou CI : étendue et attente (schéma 5 ; calculette#outillage-8, V12) ---------------------------
+
+statut_ci() { # $1 état du workflow des contrôles, $2 rang de l'appel (tous)
+  api GET "/repos/$repo/commits/$(tete)/status" \
+    "$(jq -nc --arg e "$1" '{state: $e, statuses: [{context: "checks / checks (pull_request)", status: $e}]}')" 200 "${2:-}"
+}
+
+lectures_ci() { # nombre de lectures de l'état de CI de la tête
+  local n=0 ligne
+  while IFS= read -r ligne; do
+    [[ $ligne != "GET /repos/$repo/commits/"*/status ]] || n=$((n + 1))
+  done < <(appels)
+  printf '%s' "$n"
+}
+
+case_audit_schema_4_refuse_sans_repli() {
+  projet workflow.schema=4 -ci.statuses -ci.wait
+  forge_prete
+  verifie "$pr"
+  assert_eq 2 "$rc" "un workflow.config au schéma 4 est refusé (messages : $err$out)"
+  assert_contains "exige le schéma 5 (ci.statuses, ci.wait" "$err" "le schéma et les champs sont nommés"
+  assert_eq "" "$(appels)" "refusé avant tout appel à la forge"
+}
+
+case_audit_ci_en_cours_sans_attente_bloque_tout_de_suite() {
+  projet
+  forge_prete
+  statut_ci pending
+  verifie "$pr"
+  assert_eq 1 "$rc" "ci.wait = 0 : une CI en cours bloque (messages : $err)"
+  verrou bloque "CI"
+  assert_contains "en cours sur la tête : relancer l'audit quand elle est terminée." "$out" "le message d'avant le schéma 5"
+  assert_eq 1 "$(lectures_ci)" "une seule lecture : aucune attente"
+  aucune_ecriture
+}
+
+case_audit_ci_en_cours_attendue_puis_verte() {
+  projet ci.wait=1
+  forge_prete
+  statut_ci success
+  statut_ci pending 1
+  verifie "$pr"
+  assert_eq 0 "$rc" "la CI en cours est attendue, puis verte (messages : $err$out)"
+  verrou passe "CI"
+  assert_eq 2 "$(lectures_ci)" "deux lectures"
+  assert_contains "CI en cours sur la tête" "$err" "l'attente est annoncée"
+  aucune_ecriture
+}
+
+case_audit_ci_toujours_en_cours_apres_l_attente() {
+  projet ci.wait=1
+  forge_prete
+  statut_ci pending
+  verifie "$pr"
+  assert_eq 1 "$rc" "l'attente épuisée bloque (messages : $err)"
+  verrou bloque "CI"
+  assert_contains "toujours en cours sur la tête après 1 s" "$out" "le message dit l'attente"
+  assert_eq 2 "$(lectures_ci)" "la lecture d'origine et une relecture après l'attente"
+  aucune_ecriture
+}
+
+case_audit_ci_sans_aucun_statut_jamais_attendue() {
+  # le runner coincé : « pending » sans statut. Rien ne tourne, il n'y a rien à attendre.
+  projet ci.wait=1 ci.statuses=all
+  forge_prete
+  api GET "/repos/$repo/commits/$(tete)/status" '{"state":"pending","statuses":[]}'
+  verifie "$pr"
+  assert_eq 1 "$rc" "aucun statut : refus immédiat (messages : $err)"
+  assert_contains "aucun statut sur la tête" "$out" "le message dit que rien n'a démarré"
+  assert_eq 1 "$(lectures_ci)" "aucune attente"
+  aucune_ecriture
+}
+
+case_audit_ci_tous_les_statuts() {
+  projet ci.statuses=all
+  forge_prete
+  api GET "/repos/$repo/commits/$(tete)/status" \
+    '{"state":"failure","statuses":[{"context":"checks / checks (pull_request)","status":"success"},{"context":"audit / audit (push)","status":"failure"}]}'
+  verifie "$pr"
+  assert_eq 1 "$rc" "ci.statuses = all : un autre workflow en échec bloque (messages : $err)"
+  verrou bloque "CI"
+  assert_contains "état failure sur la tête" "$out" "l'état fautif est nommé"
+  aucune_ecriture
+}
+
+case_audit_ci_contexte_seul() {
+  projet ci.statuses=context
+  forge_prete
+  api GET "/repos/$repo/commits/$(tete)/status" \
+    '{"state":"failure","statuses":[{"context":"checks / checks (pull_request)","status":"success"},{"context":"audit / audit (push)","status":"failure"}]}'
+  verifie "$pr"
+  assert_eq 0 "$rc" "ci.statuses = context : l'autre workflow ne décide pas (messages : $err)"
+}
+
 # Règle d'amorçage (ci.bootstrap = true) : le workflow ci.workflow est absent de la base, et la tête
 # n'a aucun statut de CI. Le script lance alors lui-même checks.command, dans une copie de la tête
 # créée par « git worktree add ». Une telle copie n'a AUCUN sous-module initialisé : leurs dossiers y

@@ -15,8 +15,11 @@
 #                                                      règle du commit de statut : 0 respectée, 1 sinon, avec la raison ;
 #                                                      <fichier de story> : son nom sans « .md » (la clé en numbered,
 #                                                      le nom qui porte l'alias en keyed)
-#   ci_gate <état CI> <workflow sur la base : 0 ou 1> <chemin du workflow> <contexte>
-#                                                      « passe|bloque|amorçage<TAB>détail » : 0, 2 illisible
+#   ci_gate <état CI> <workflow sur la base : 0 ou 1> <chemin du workflow> <contexte> <context|all>
+#                                                      « passe|bloque|en-cours|amorçage<TAB>détail » : 0,
+#                                                      2 illisible ou étendue inconnue
+#   ci_wait_step <secondes attendues> <ci.wait>     pas de la prochaine attente d'une CI en cours : 30 s, ou ce
+#                                                      qui reste de ci.wait ; rien quand l'attente est épuisée : 0, 2 illisible
 #   review_exemption <expression|none> <fichiers>      exception documentaire : 0 tous les fichiers
 #                                                      correspondent, 1 non (ou none), 2 expression illisible
 #   base_gate <base de la PR> <forge.base> <publication|none>
@@ -208,16 +211,31 @@ status_commit_keyed_file() { # $1 fichier, $2 clé, $3 suivi, $4 dossier des sto
 # l'agent de parité (AD-16) commente sans bloquer, et son statut ne doit pas décider d'une fusion.
 # La valeur de repli d'un statut sans état s'écrit en un seul mot : la boucle qui nomme les états
 # fautifs découpe sur les espaces, et « sans état » y compterait pour deux (revue de la PR n° 52).
-ci_gate() { # $1 réponse de l'état combiné de la CI, $2 1 si le workflow existe sur la base, sinon 0, $3 chemin du workflow, $4 contexte
-  local etats context=${4:-}
+ci_gate() { # $1 réponse de l'état combiné de la CI, $2 1 si le workflow existe sur la base, sinon 0, $3 chemin du workflow, $4 contexte, $5 étendue (context|all)
+  local etats tous context=${4:-} scope=${5:-}
   # un contexte vide prendrait tous les statuts « » et « / … » : refusé comme une réponse illisible
   [[ -n $context ]] || return 2
+  # l'étendue vient de ci.statuses : aucune valeur de repli
+  [[ $scope == context || $scope == all ]] || return 2
   etats=$(jq -er --arg c "$context" '
       [ (.statuses // [])[]
         | select((.context // "") == $c or ((.context // "") | startswith($c + " /")))
         | (.status // "sans-état") ]
       | join(" ")' "$1" 2>/dev/null) || return 2
-  if [[ -z $etats ]]; then
+  tous=$etats
+  if [[ $scope == all ]]; then
+    tous=$(jq -er '[ (.statuses // [])[] | (.status // "sans-état") ] | join(" ")' "$1" 2>/dev/null) || return 2
+    # aucun statut du tout : rien n'a démarré (signature du runner coincé, docs du projet source). Ce
+    # n'est jamais « en cours » : le script ne l'attend pas.
+    if [[ -z $tous ]]; then
+      if [[ $2 == 1 ]]; then
+        printf 'bloque\t%s existe sur la base : aucun statut sur la tête, rien n%sa démarré (runner coincé ?).\n' "$3" "'"
+      else
+        printf "amorçage\t%s absent de la base : règle d'amorçage.\n" "$3"
+      fi
+      return 0
+    fi
+  elif [[ -z $etats ]]; then
     if [[ $2 == 1 ]]; then
       printf 'bloque\t%s existe sur la base : aucun statut du workflow « %s » sur la tête (story 3.16).\n' "$3" "$context"
     else
@@ -230,29 +248,67 @@ ci_gate() { # $1 réponse de l'état combiné de la CI, $2 1 si le workflow exis
   # pose donc un « checks / checks (push) » ignoré à côté du « (pull_request) » vert — constaté le
   # 21/09/2026, dès que les contextes sont devenus obligatoires. Il est écarté, mais il ne suffit
   # pas : il faut au moins un run effectivement vert.
-  local effectifs=""
+  local effectifs="" effectifs_contexte=""
   local etat
-  for etat in $etats; do
+  for etat in $tous; do
     [[ $etat != skipped ]] || continue
     effectifs+="${effectifs:+ }$etat"
   done
-  if [[ " $etats " == *" pending "* ]]; then
-    printf "bloque\ten cours sur la tête : relancer l'audit quand elle est terminée.\n"
+  for etat in $etats; do
+    [[ $etat != skipped ]] || continue
+    effectifs_contexte+="${effectifs_contexte:+ }$etat"
+  done
+  # « all » : un état fautif bloque tout de suite, même si un autre run est en cours — l'attendre ne
+  # changerait pas le verdict. « context » garde l'ordre d'avant le schéma 5 (en cours d'abord).
+  local fautifs=""
+  if [[ $scope == all ]]; then
+    for etat in $effectifs; do
+      [[ $etat != success && $etat != pending ]] || continue
+      [[ " $fautifs " == *" $etat "* ]] || fautifs+="${fautifs:+ }$etat"
+    done
+  fi
+  # « en-cours » : le script attend la fin du run (ci.wait), ou bloque avec ce détail
+  if [[ -n $fautifs ]]; then
+    printf 'bloque	état %s sur la tête.
+' "$fautifs"
+  elif [[ " $tous " == *" pending "* ]]; then
+    printf "en-cours\ten cours sur la tête : relancer l'audit quand elle est terminée.\n"
   elif [[ -z $effectifs ]]; then
     printf 'bloque\taucun run effectif sur la tête : tous les statuts du workflow « %s » sont ignorés.\n' "$context"
-  elif [[ $effectifs =~ ^(success )*success$ ]]; then
-    printf 'passe\tverte sur la tête.\n'
-  else
+  elif [[ ! $effectifs =~ ^(success )*success$ ]]; then
     # Les états fautifs sont nommés, les verts écartés : avec deux jobs, « success failure » se lisait
     # mal (constat de la revue de la PR n° 52). « cancelled », « skipped » ou « warning » bloquent
     # comme un échec, et aucun état inconnu n'est traité par omission.
-    local fautifs=""
     for etat in $effectifs; do
       [[ $etat != success ]] || continue
       [[ " $fautifs " == *" $etat "* ]] || fautifs+="${fautifs:+ }$etat"
     done
     printf 'bloque\tétat %s sur la tête.\n' "$fautifs"
+  elif [[ $scope == context ]]; then
+    printf 'passe\tverte sur la tête.\n'
+  # « all » s'ajoute au workflow des contrôles, il ne le remplace pas : ses statuts doivent y être, et
+  # au moins un run effectif
+  elif [[ -z $etats ]]; then
+    if [[ $2 == 1 ]]; then
+      printf 'bloque\t%s existe sur la base : aucun statut du workflow « %s » sur la tête (story 3.16).\n' "$3" "$context"
+    else
+      printf "amorçage\t%s absent de la base : règle d'amorçage.\n" "$3"
+    fi
+  elif [[ -z $effectifs_contexte ]]; then
+    printf 'bloque\taucun run effectif sur la tête : tous les statuts du workflow « %s » sont ignorés.\n' "$context"
+  else
+    printf 'passe\tverte sur la tête (tous les statuts).\n'
   fi
+}
+
+# L'attente d'une CI en cours (ci.wait, schéma 5) : une relecture toutes les 30 s, le dernier pas
+# raccourci à ce qui reste — l'attente totale ne dépasse jamais ci.wait. Attente épuisée : sortie vide.
+ci_wait_step() { # $1 secondes déjà attendues, $2 ci.wait
+  [[ ${1:-} =~ ^[0-9]+$ && ${2:-} =~ ^[0-9]+$ ]] || return 2
+  local reste=$(($2 - $1))
+  ((reste > 0)) || return 0
+  ((reste < 30)) || reste=30
+  printf '%s\n' "$reste"
 }
 
 # jq -r écrit le titre brut : @tsv échapperait l'antislash, que read ne décoderait pas.

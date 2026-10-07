@@ -88,8 +88,8 @@ ci_reponse() { # $1… = « <contexte>=<état> » ; sans argument, aucun statut
   printf '{"state": "peu importe", "total_count": %s, "statuses": [%s]}\n' "$#" "$entrees" > "$work/ci.json"
 }
 
-ci_case() { # $1 workflow sur la base, $2 décision attendue, $3 libellé, $4 contexte (checks) ; la réponse est déjà écrite
-  run ci_gate "$work/ci.json" "$1" .gitea/workflows/checks.yaml "${4:-checks}"
+ci_case() { # $1 workflow sur la base, $2 décision attendue, $3 libellé, $4 contexte (checks), $5 étendue (context) ; la réponse est déjà écrite
+  run ci_gate "$work/ci.json" "$1" .gitea/workflows/checks.yaml "${4:-checks}" "${5:-context}"
   assert_eq 0 "$rc" "$3 : code de retour"
   assert_eq "$2" "${out%%$'\t'*}" "$3"
 }
@@ -98,10 +98,12 @@ case_verrou_ci() {
   ci_reponse "checks / checks (pull_request)=success"; ci_case 1 passe "CI verte"
   ci_reponse "checks / checks (push)=success" "checks / checks (pull_request)=success"
   ci_case 1 passe "deux statuts du même workflow, tous verts"
-  ci_reponse "checks / checks (pull_request)=pending"; ci_case 0 bloque "CI en cours pendant l'amorçage (S5)"
-  ci_reponse "checks / checks (pull_request)=pending"; ci_case 1 bloque "CI en cours, workflow sur la base"
+  # en cours : le script attend (ci.wait) ou bloque ; la décision le dit, le détail reste celui d'avant
+  ci_reponse "checks / checks (pull_request)=pending"; ci_case 0 en-cours "CI en cours pendant l'amorçage (S5)"
+  ci_reponse "checks / checks (pull_request)=pending"; ci_case 1 en-cours "CI en cours, workflow sur la base"
+  assert_eq "en-cours	en cours sur la tête : relancer l'audit quand elle est terminée." "$out" "détail inchangé"
   ci_reponse "checks / checks (pull_request)=success" "checks / checks (push)=pending"
-  ci_case 1 bloque "un statut en cours suffit à bloquer"
+  ci_case 1 en-cours "un statut en cours suffit"
   ci_reponse "checks / checks (pull_request)=failure"; ci_case 0 bloque "CI en échec"
   ci_reponse "checks / checks (pull_request)=error"; ci_case 1 bloque "CI en erreur"
   ci_reponse "checks / checks (pull_request)=cancelled"; ci_case 1 bloque "run annulé : bloque comme un échec"
@@ -154,10 +156,10 @@ case_verrou_ci_deux_absences_distinctes() {
 
 case_verrou_ci_reponse_illisible() {
   printf '[]\n' > "$work/ci.json"
-  run ci_gate "$work/ci.json" 0 .gitea/workflows/checks.yaml checks
+  run ci_gate "$work/ci.json" 0 .gitea/workflows/checks.yaml checks context
   assert_eq 2 "$rc" "réponse illisible"
   printf 'pas du json\n' > "$work/ci.json"
-  run ci_gate "$work/ci.json" 0 .gitea/workflows/checks.yaml checks
+  run ci_gate "$work/ci.json" 0 .gitea/workflows/checks.yaml checks context
   assert_eq 2 "$rc" "réponse qui n'est pas du JSON"
 }
 
@@ -462,7 +464,7 @@ case_verrou_ci_statut_ignore() {
   ci_case 1 bloque "un ignoré n'excuse pas un échec"
   assert_eq "bloque	état failure sur la tête." "$out" "seul l'état fautif est nommé"
   ci_reponse "checks / checks (push)=skipped" "checks / checks (pull_request)=pending"
-  ci_case 1 bloque "un run en cours bloque, ignoré ou non"
+  ci_case 1 en-cours "un run en cours reste en cours, ignoré ou non"
 }
 
 case_verrou_ci_contexte_lu_dans_workflow_config() {
@@ -476,7 +478,7 @@ case_verrou_ci_contexte_lu_dans_workflow_config() {
   ci_case 1 bloque "un workflow dont le nom commence par le contexte sans être lui ne compte pas" "CI Tests & Quality"
   assert_contains "aucun statut du workflow « CI Tests & Quality »" "$out" "le message nomme le workflow déclaré"
   ci_reponse "checks / checks (pull_request)=success"
-  run ci_gate "$work/ci.json" 1 .gitea/workflows/checks.yaml ""
+  run ci_gate "$work/ci.json" 1 .gitea/workflows/checks.yaml "" context
   assert_eq 2 "$rc" "un contexte vide ne prend pas tous les statuts : réponse refusée"
 }
 
@@ -510,6 +512,78 @@ case_verrou_de_base() {
   assert_contains "seule dev est admise" "$out" "le message nomme la base admise"
   run base_gate main main none
   assert_eq "passe" "${out%%$'\t'*}" "sans branche de publication, la base unique passe"
+}
+
+# --- étendue « all » (ci.statuses, schéma 5 ; calculette#outillage-8, V12) ---------------------------
+
+case_verrou_ci_etendue_obligatoire() {
+  ci_reponse "checks / checks (pull_request)=success"
+  run ci_gate "$work/ci.json" 1 .gitea/workflows/checks.yaml checks
+  assert_eq 2 "$rc" "sans étendue, aucun repli sur « context »"
+  run ci_gate "$work/ci.json" 1 .gitea/workflows/checks.yaml checks tous
+  assert_eq 2 "$rc" "une étendue inconnue est refusée"
+}
+
+case_verrou_ci_tous_les_statuts() {
+  # calculette#outillage-8 juge tous ses workflows : l'audit de dépendances bloque comme la CI.
+  ci_reponse "CI Tests & Quality / phpunit (push)=success" "Security Audit / audit (push)=failure"
+  ci_case 1 bloque "un autre workflow en échec bloque" "CI Tests & Quality" all
+  assert_eq "bloque	état failure sur la tête." "$out" "l'état fautif est nommé"
+  ci_reponse "CI Tests & Quality / phpunit (push)=success" "Security Audit / audit (push)=pending"
+  ci_case 1 en-cours "un autre workflow en cours se fait attendre" "CI Tests & Quality" all
+  ci_reponse "CI Tests & Quality / phpunit (push)=success" "Security Audit / audit (push)=success"
+  ci_case 1 passe "tous verts" "CI Tests & Quality" all
+  assert_eq "passe	verte sur la tête (tous les statuts)." "$out" "le détail dit l'étendue"
+  ci_reponse "CI Tests & Quality / phpunit (push)=success" "Security Audit / audit (push)=skipped"
+  ci_case 1 passe "un statut ignoré est écarté" "CI Tests & Quality" all
+  ci_reponse "CI Tests & Quality / phpunit (push)=pending" "Security Audit / audit (push)=failure"
+  ci_case 1 bloque "un échec bloque tout de suite, sans attendre le run en cours" "CI Tests & Quality" all
+  assert_eq "bloque	état failure sur la tête." "$out" "seul l'état fautif est nommé"
+  ci_reponse "checks / checks (pull_request)=pending" "checks / autre (pull_request)=failure"
+  ci_case 1 en-cours "context : l'ordre d'avant le schéma 5 est gardé (en cours d'abord)"
+}
+
+case_verrou_ci_tous_les_statuts_exige_le_workflow_des_controles() {
+  # « tous » s'ajoute au workflow des contrôles, il ne le remplace pas : un audit vert seul ne vaut pas une CI.
+  ci_reponse "Security Audit / audit (push)=success"
+  ci_case 1 bloque "le workflow des contrôles manque" "CI Tests & Quality" all
+  assert_contains "aucun statut du workflow « CI Tests & Quality »" "$out" "le message le nomme"
+  ci_reponse "Security Audit / audit (push)=success"
+  ci_case 0 amorçage "workflow absent de la base : amorçage" "CI Tests & Quality" all
+  ci_reponse "Security Audit / audit (push)=failure"
+  ci_case 0 bloque "pendant l'amorçage, un autre workflow en échec bloque quand même" "CI Tests & Quality" all
+  ci_reponse "CI Tests & Quality / phpunit (push)=skipped" "Security Audit / audit (push)=success"
+  ci_case 1 bloque "le workflow des contrôles seulement ignoré ne compte pas" "CI Tests & Quality" all
+  assert_contains "aucun run effectif" "$out" "le message dit ce qui manque"
+}
+
+case_verrou_ci_tous_les_statuts_runner_coince() {
+  # « pending » sans aucun statut : rien n'a démarré. Jamais « en cours », donc jamais attendu.
+  printf '{"state": "pending", "total_count": 0, "statuses": []}\n' > "$work/ci.json"
+  ci_case 1 bloque "aucun statut, workflow sur la base" "CI Tests & Quality" all
+  assert_contains "aucun statut sur la tête" "$out" "le message dit que rien n'a démarré"
+  printf '{"state": "pending", "total_count": 0, "statuses": []}\n' > "$work/ci.json"
+  ci_case 0 amorçage "aucun statut, workflow absent de la base" "CI Tests & Quality" all
+}
+
+case_attente_ci_ne_depasse_jamais_ci_wait() {
+  # constat de la revue 1 de la PR n° 17 : un pas fixe de 30 s attendait 60 s pour ci.wait = 40
+  run ci_wait_step 0 40; assert_eq 30 "$out" "premier pas : 30 s"
+  run ci_wait_step 30 40; assert_eq 10 "$out" "dernier pas raccourci à ce qui reste"
+  run ci_wait_step 40 40; assert_eq "" "$out" "attente épuisée : aucun pas"
+  assert_eq 0 "$rc" "épuisée n'est pas une erreur"
+  run ci_wait_step 0 0; assert_eq "" "$out" "ci.wait = 0 : aucune attente"
+  run ci_wait_step 0 1; assert_eq 1 "$out" "ci.wait plus court que le pas"
+  local attendu=0 pas lectures=1
+  while pas=$(ci_wait_step "$attendu" 1200) && [[ -n $pas ]]; do
+    attendu=$((attendu + pas)); lectures=$((lectures + 1))
+  done
+  assert_eq "1200 41" "$attendu $lectures" "1200 s : 40 attentes de 30 s, 41 lectures (l'ancien sondage de calculette)"
+  attendu=0
+  while pas=$(ci_wait_step "$attendu" 95) && [[ -n $pas ]]; do attendu=$((attendu + pas)); done
+  assert_eq 95 "$attendu" "l'attente totale vaut ci.wait, jamais plus"
+  run ci_wait_step x 40; assert_eq 2 "$rc" "entrée illisible"
+  run ci_wait_step 0 ""; assert_eq 2 "$rc" "ci.wait absent : aucune valeur de repli"
 }
 
 run_case "$@"
