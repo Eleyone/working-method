@@ -37,7 +37,7 @@
 # Procédure : procedures/workflow-config.md
 
 # Le schéma : champ → type. Un « ? » en tête du type marque un champ désactivable par « none ».
-# Les schémas 3, 4, 5 et 6 sont lus (procedures/workflow-config.md, « Changer de schéma »). Le 3 remplace les
+# Les schémas 3 à 7 sont lus (procedures/workflow-config.md, « Changer de schéma »). Le 3 remplace les
 # deux relecteurs nommés des schémas 1 et 2 par la table review.reviewers, ouverte à tout fournisseur. Un
 # fichier au schéma 1 ou 2 est refusé avec ce qu'il faut changer, jamais lu « au mieux » : il porterait
 # les anciennes clés, que plus aucun outil ne lit. Le 4 ajoute sprint.non-story-files, que la convention
@@ -45,7 +45,10 @@
 # et l'attente du verrou CI (calculette#outillage-8) : verify-and-merge-pr les exige, aucun repli n'existe. Le 6
 # ajoute review.agent-paths, les fichiers qui dirigent les agents et lèvent l'exception documentaire
 # (calculette#outillage-22) ; comme le 4, il n'impose aucune migration : un fichier au schéma 5 reste valide
-# pour tous les outils, et le verrou de revue dit qu'il ne contrôle pas ces fichiers.
+# pour tous les outils, et le verrou de revue dit qu'il ne contrôle pas ces fichiers. Le 7 ajoute la section
+# [protection], les valeurs propres au projet de la règle commune de protection des branches
+# (calculette#fix-protection-branches-dev-master) ; comme le 6, il n'impose aucune migration : seul
+# gitea/check-branch-protection.sh l'exige.
 declare -gA config_schema=(
   [workflow.schema]=schema
   [forge.repo]=repo
@@ -82,6 +85,13 @@ declare -gA config_schema=(
   [bmad.document-output-language]=label
   [bmad.output-folder]=path
   [agents.skill-dirs]=paths
+  [protection.base-push]=?accounts
+  [protection.base-force-push]=?accounts
+  [protection.release-push]=?accounts
+  [protection.merge]=accounts
+  [protection.status-contexts]=?contexts
+  [protection.block-outdated]=boolean
+  [protection.release-merge-style]=?merge-style
 )
 # Le schéma à partir duquel un champ existe ; un champ absent de cette table existe depuis le schéma 1.
 # Il sert aux messages : un fichier d'un schéma ancien est refusé, mais chaque écart y est nommé.
@@ -94,6 +104,13 @@ declare -gA config_since_schema=(
   [ci.statuses]=5
   [ci.wait]=5
   [review.agent-paths]=6
+  [protection.base-push]=7
+  [protection.base-force-push]=7
+  [protection.release-push]=7
+  [protection.merge]=7
+  [protection.status-contexts]=7
+  [protection.block-outdated]=7
+  [protection.release-merge-style]=7
 )
 # Les champs retirés, et ce qui les remplace : présents, ils font refuser le fichier avec la nouvelle
 # forme, quel que soit le schéma déclaré — jamais une clé ignorée en silence.
@@ -116,14 +133,14 @@ config_check_type() {
   case $type in
     schema)
       case $value in
-        3|4|5|6) ;;
+        3|4|5|6|7) ;;
         1|2)
           local added=""
           [[ $value == 2 ]] || added=", et bmad.project-name, bmad.document-output-language, bmad.output-folder s'ajoutent"
           echo "schéma $value retiré : le schéma 3 est attendu — review.reviewer-for-claude et review.reviewer-for-gemini y sont remplacés par la table review.reviewers$added (procedures/workflow-config.md, « Changer de schéma »)"
           return 1
           ;;
-        *) echo "schéma « $value » inconnu de cet outillage (schémas lus : 3, 4, 5 et 6)"; return 1 ;;
+        *) echo "schéma « $value » inconnu de cet outillage (schémas lus : 3 à 7)"; return 1 ;;
       esac
       ;;
     repo) [[ $value =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "« propriétaire/nom » attendu"; return 1; } ;;
@@ -217,6 +234,39 @@ config_check_type() {
           ;;
       esac
       ;;
+    accounts)
+      # comptes de la forge, séparés par une espace : la forge ne distingue pas la casse d'un nom de
+      # compte, un doublon se compte donc sans elle
+      [[ $value =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*( [A-Za-z0-9][A-Za-z0-9_.-]*)*$ ]] \
+        || { echo "comptes de la forge attendus (lettres, chiffres, « _ . - », sans « - » en tête), séparés par une espace"; return 1; }
+      config_check_unique "${value,,}" || return 1
+      # « None » ou « NONE » ne désactive rien : seul « none » le fait ; écrit autrement, il serait lu
+      # comme un compte de ce nom
+      [[ " ${value,,} " != *" none "* ]] || { echo "« none » n'est pas un compte : seul « none », en minuscules et seul, désactive un champ désactivable"; return 1; }
+      ;;
+    contexts)
+      # motifs de contextes de statut, tels que la forge les exige (« checks / checks* ») : ils
+      # contiennent des espaces, d'où la virgule entre deux motifs ; les blancs autour d'elle sont ôtés
+      local -a contexts=()
+      local -A seen_contexts=()
+      local context
+      [[ $value != *, && $value != ,* ]] || { echo "motif vide autour d'une virgule"; return 1; }
+      IFS=, read -r -a contexts <<< "$value"
+      for context in "${contexts[@]}"; do
+        context=${context#"${context%%[![:space:]]*}"}
+        context=${context%"${context##*[![:space:]]}"}
+        [[ -n $context ]] || { echo "motif vide autour d'une virgule"; return 1; }
+        [[ ! $context =~ [[:cntrl:]] ]] || { echo "caractère de contrôle refusé"; return 1; }
+        [[ -z ${seen_contexts[$context]+x} ]] || { echo "« $context » écrit deux fois dans la liste"; return 1; }
+        seen_contexts[$context]=1
+      done
+      ;;
+    merge-style)
+      case $value in
+        merge|fast-forward-only) ;;
+        *) echo "« merge » ou « fast-forward-only » attendu (ou « none ») : le style de la publication, ouvert à côté du squash"; return 1 ;;
+      esac
+      ;;
     *) echo "type « $type » inconnu du lecteur"; return 1 ;;
   esac
   return 0
@@ -305,7 +355,7 @@ config_load() { # $1 = fichier
   # présumé keyed.
   local level=3
   case ${values[workflow.schema]:-} in
-    1|2|4|5|6) level=${values[workflow.schema]} ;;
+    1|2|4|5|6|7) level=${values[workflow.schema]} ;;
   esac
   for key in "${!seen[@]}"; do
     if [[ -n ${config_removed[$key]+x} ]]; then
@@ -372,6 +422,9 @@ config_load() { # $1 = fichier
       config_pair_rule problems values ci.workflow ci.status-context ci.statuses ci.wait
     else
       config_pair_rule problems values ci.workflow ci.status-context
+    fi
+    if ((level >= 7)); then
+      config_protection_rules problems values
     fi
     if [[ ${values[forge.release-branch]} == "${values[forge.base]}" ]]; then
       problems+=("forge.release-branch : identique à forge.base.")
@@ -471,6 +524,32 @@ config_pair_rule() {
       pair_problems+=("$field : « none » refusé tant que $lead porte une valeur.")
     fi
   done
+}
+
+# Règles de la section [protection] (schéma 7). $1 = tableau des problèmes, $2 = tableau des valeurs.
+config_protection_rules() {
+  local -n prot_problems=$1 prot_values=$2
+  local account missing=""
+  local -A pushers=()
+  # la forge n'admet un push forcé qu'à un compte qui peut déjà pousser
+  if [[ ${prot_values[protection.base-force-push]} != none ]]; then
+    if [[ ${prot_values[protection.base-push]} != none ]]; then
+      for account in ${prot_values[protection.base-push]}; do pushers[${account,,}]=1; done
+    fi
+    for account in ${prot_values[protection.base-force-push]}; do
+      [[ -n ${pushers[${account,,}]+x} ]] || missing+=" $account"
+    done
+    [[ -z $missing ]] \
+      || prot_problems+=("protection.base-force-push : chaque compte doit aussi figurer dans protection.base-push (absents :$missing).")
+  fi
+  # un dépôt sans branche de publication ne déclare rien pour elle
+  if [[ ${prot_values[forge.release-branch]} == none ]]; then
+    local field
+    for field in protection.release-push protection.release-merge-style; do
+      [[ ${prot_values[$field]} == none ]] \
+        || prot_problems+=("$field : doit valoir « none » quand forge.release-branch vaut « none ».")
+    done
+  fi
 }
 
 config_get() { # $1 = variable à remplir, $2 = champ

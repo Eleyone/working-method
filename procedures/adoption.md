@@ -31,7 +31,23 @@ Ce que le changement déplace, à relire **avant** de l'appliquer, dans la story
 
 Le retour arrière (même chemin, valeur inverse, et ce qu'il faut revérifier) s'écrit dans une note du projet, puisque l'opération est manuelle.
 
-**Relever aussi la protection des branches** (`GET /repos/<forge.repo>/branch_protections`) et les styles de fusion admis (`GET /repos/<forge.repo>`) : la story d'adoption note ce qu'elle trouve, sans rien changer. Une règle de protection commune (branche de travail et branche de publication), appliquée à l'adoption et vérifiée par un contrôle, est à venir (`calculette#fix-protection-branches-dev-master`) ; d'ici là, un écart se note et se signale (constat de la quatrième adoption : aucune règle de protection, et la fusion par commit de fusion interdite, alors que la publication du projet en aura besoin).
+## 0 bis. Protection des branches : la règle commune, posée et vérifiée
+
+⛔ **La branche de travail et la branche de publication sont protégées par la règle commune** (`gitea-branches.md`, « La règle commune »), posée le 08/10/2026 pour tous les projets (calculette#fix-protection-branches-dev-master). L'étape vaut pour chaque adoption future, et pour chaque projet déjà adopté, à sa montée au schéma 7.
+
+1. **Relever l'existant**, avant toute décision : règles (`GET /repos/<forge.repo>/branch_protections`), styles de fusion (`GET /repos/<forge.repo>`), et **comment la publication a été faite jusqu'ici** (graphe de la branche de publication : commits de fusion, fast-forward, pushes directs). La story d'adoption note ce qu'elle trouve.
+2. **Déclarer les valeurs** : section `[protection]` de `workflow.config` (schéma 7, `workflow-config.md`), le motif de chaque valeur en commentaire. Qui pousse sur la branche de travail ou de publication (une CI de publication, un correctif de production) et par quel compte ; quel style de publication ; quels contextes de CI exiger — `none` pour un projet sans CI.
+3. **Lancer le contrôle**, depuis la branche de la PR qui déclare les valeurs :
+
+   ```bash
+   .working-method/gitea/check-branch-protection.sh
+   ```
+
+   Sur un écart (`1`), il donne la **liste exacte des réglages à poser** dans l'interface, écran par écran et champ par champ, avec les libellés de l'interface et la valeur lue. ⛔ L'agent ne pose rien : il remet la liste au responsable du projet, qui la pose dans l'interface (décision A du 08/10/2026). Un `2` (jeton absent, `403` : le compte du jeton n'administre pas le dépôt) n'est jamais un `0` : on corrige la cause et on relance.
+4. **Relancer le contrôle** après la pose : il doit rendre `0`. C'est cette relecture qui fait foi, jamais la réponse de la forge. La story d'adoption **consigne sa sortie**, avec la date.
+5. **Éprouver** : un push direct sur chaque branche protégée, d'un compte qui n'est pas dans sa liste de push, est refusé (`pre-receive hook declined`), et la branche reste à son SHA (`git ls-remote` avant et après). La story le consigne.
+
+⚠️ Le contrôle ne relit pas les protections d'**étiquettes**, et ne détecte pas une autre branche durable sans règle : la story d'adoption les relève à la main si le projet en a.
 
 ## 1. Ajouter le sous-module
 
@@ -104,6 +120,8 @@ Un projet qui n'avait **aucun** gate avant l'adoption n'a rien à rejouer : la s
 ## 8. Monter le sous-module
 
 Une montée est une PR du projet qui change le SHA du sous-module (ouverte par Renovate, ou à la main), et qui passe par les gates du projet. Si le schéma de `workflow.config` change, la PR de montée met le fichier à jour.
+
+À chaque montée, lancer aussi le contrôle de protection (`.working-method/gitea/check-branch-protection.sh`, étape 0 bis) et noter sa sortie dans la PR : la règle commune peut avoir changé avec le sous-module. ⚠️ La montée au schéma 7 et la déclaration de `[protection]` sont la **même PR** : seul le contrôle exige le 7, mais un fichier au 7 sans la section est refusé par tous les outils. Une montée ouverte par Renovate n'apporte pas la déclaration : on la complète à la main.
 
 ## 9. La PR d'adoption elle-même
 

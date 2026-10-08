@@ -37,10 +37,12 @@ avec le nom de chaque champ fautif et la raison, et l'outil sort en **code `2`**
 et l'outil qui la porte **le dit** dans sa sortie (« désactivé (… = none) ») — il ne la rend jamais
 verte en silence. Sur un champ non désactivable, `none` est une erreur de type.
 
-## Les champs — schémas 3, 4, 5 et 6
+## Les champs — schémas 3 à 7
 
-Le lecteur lit les schémas **3**, **4**, **5** et **6** (« Changer de schéma », ci-dessous), présentés ici
-du plus récent au plus ancien. Le schéma 6 ajoute au 5 un seul champ, `review.agent-paths`, les fichiers
+Le lecteur lit les schémas **3**, **4**, **5**, **6** et **7** (« Changer de schéma », ci-dessous), présentés
+ici du plus récent au plus ancien. Le schéma 7 ajoute au 6 la section `[protection]`, les valeurs propres au
+projet de la règle commune de protection des branches (calculette#fix-protection-branches-dev-master) : comme
+le 6, il n'impose aucune migration, et seul `gitea/check-branch-protection.sh` l'exige. Le schéma 6 ajoute au 5 un seul champ, `review.agent-paths`, les fichiers
 qui dirigent les agents (calculette#outillage-22) : comme le 4, il n'impose aucune migration, et un
 fichier au schéma 5 reste valide pour tous les outils, `verify-and-merge-pr` compris. Le schéma 5 ajoute
 au 4 les deux champs du verrou CI, `ci.statuses` et `ci.wait` (calculette#outillage-8) : `verify-and-merge-pr`
@@ -54,7 +56,7 @@ BMAD du projet.
 
 | Champ | Type | Désactivable | Lu par |
 |---|---|---|---|
-| `workflow.schema` | `3` \| `4` \| `5` \| `6` | non | tous (`verify-and-merge-pr` : `5` ou `6`) |
+| `workflow.schema` | `3` \| `4` \| `5` \| `6` \| `7` | non | tous (`verify-and-merge-pr` : `5` à `7` ; `check-branch-protection` : `7`) |
 | `forge.repo` | `propriétaire/nom` | non | `gitea/gitea.sh` : dépôt distant vérifié, appels à l'API |
 | `forge.base` | branche (`git check-ref-format --branch`) | non | `create-pull-request`, `verify-and-merge-pr`, `llm-review` |
 | `forge.release-branch` | branche, différente de la base | **oui** | refus des PR vers elle (`create-pull-request`, `verify-and-merge-pr`) |
@@ -89,6 +91,13 @@ BMAD du projet.
 | `bmad.document-output-language` | libellé | non | `bin/install` : `document_output_language` |
 | `bmad.output-folder` | chemin | non | `bin/install` : `output_folder`, et les dossiers d'artefacts qui en dérivent |
 | `agents.skill-dirs` | chemins séparés par une espace | non | `bin/install` |
+| `protection.base-push` *(schéma 7)* | comptes de la forge, séparés par une espace | **oui** (`none` : aucun push direct) | `check-branch-protection` : liste de push direct de `forge.base` |
+| `protection.base-force-push` *(schéma 7)* | comptes, chacun aussi dans `protection.base-push` | **oui** (`none` : aucun push forcé) | `check-branch-protection` : liste de push forcé de `forge.base` |
+| `protection.release-push` *(schéma 7)* | comptes | **oui** ; `none` obligatoire sans branche de publication | `check-branch-protection` : liste de push direct de `forge.release-branch` (push forcé toujours fermé) |
+| `protection.merge` *(schéma 7)* | comptes | non | `check-branch-protection` : qui peut fusionner une PR sur les deux branches |
+| `protection.status-contexts` *(schéma 7)* | motifs de contextes de statut, séparés par une virgule (`checks / checks*`) | **oui** (`none` : aucun contexte exigé) | `check-branch-protection` : contextes exigés par la forge sur les deux branches |
+| `protection.block-outdated` *(schéma 7)* | `true` \| `false` | non | `check-branch-protection` : `block_on_outdated_branch` des deux règles |
+| `protection.release-merge-style` *(schéma 7)* | `merge` \| `fast-forward-only` | **oui** (`none` : le squash seul) ; `none` obligatoire sans branche de publication | `check-branch-protection` : style de la publication, seul ouvert à côté du squash |
 | `module.<nom>.<clé>` *(optionnel)* | valeur du modèle du module (ci-dessous) | — | `bin/install` : surcharge de la configuration générée du module |
 
 Un **motif de nom** (`sprint.non-story-files`) se compare au nom d'un fichier du dossier des stories, sans
@@ -100,6 +109,10 @@ Un **libellé** est recopié tel quel, sans citation, dans un fichier TOML et da
 générés : ni espace en tête ou en fin, ni caractère de contrôle, ni aucun de `"`, `\`, `'`,
 `` ` ``, `#`, `:`, `{`, `}`, `[`, `]`, `,`, `&`, `*`, `!`, `|`, `>`, `%`, `@`. Un **chemin** est relatif à la racine du projet, sans `/` initial, sans `.` ni `..`, sans blanc ni
 `/` final. Un **booléen** s'écrit `true` ou `false`, jamais `yes`, `on` ou `1`, que git accepterait.
+Un **compte** est un nom de compte de la forge (lettres, chiffres, `_`, `.`, `-`, sans `-` en tête) ; la
+forge ne distingue pas la casse d'un nom de compte, un doublon se compte donc sans elle. Un **motif de
+contexte** est écrit tel que la forge l'exige, espaces comprises ; deux motifs se séparent par une virgule,
+dont les blancs voisins sont ôtés, sans motif vide ni doublon.
 
 ### La table des relecteurs — `review.reviewers`
 
@@ -162,6 +175,9 @@ projet qui en veut d'autres les **surcharge** :
 - `forge.release-branch` diffère de `forge.base`.
 - `sprint.convention = keyed` exige le schéma 4 ; au schéma 4, `sprint.non-story-files` vaut `none` dans
   toute autre convention.
+- Au schéma 7 : chaque compte de `protection.base-force-push` figure aussi dans `protection.base-push` (la
+  forge n'admet un push forcé qu'à un compte qui peut déjà pousser) ; `forge.release-branch = none` exige
+  `none` sur `protection.release-push` et `protection.release-merge-style`.
 
 ### Valeurs retirées
 
@@ -261,3 +277,35 @@ perd l'exception, et la revue redevient obligatoire pour **toute** la PR (calcul
 
 L'expression s'écrit **entre guillemets** (elle contient `|`, et `\.` hors guillemets est une erreur de
 syntaxe de git config : on écrit `[.]`).
+
+### Du schéma 6 au schéma 7
+
+Le schéma 7 ajoute la section `[protection]` : les valeurs propres au projet de la **règle commune de
+protection des branches** (`gitea-branches.md`, « La règle commune » ; calculette#fix-protection-branches-dev-master).
+Ce que la règle fixe pour tous (aucune clé de déploiement admise à pousser, aucune liste de contournement,
+squash ouvert et style par défaut…) n'y figure pas : seul ce qui varie d'un projet à l'autre.
+
+- **Aucune migration imposée**, comme du 5 au 6 : un fichier au schéma 6 reste valide pour tous les outils,
+  `verify-and-merge-pr` compris. Seul `gitea/check-branch-protection.sh` exige le 7, et refuse en `2` un
+  fichier d'un schéma antérieur, avant tout appel à la forge.
+- Au schéma 7, les sept champs sont **obligatoires** ; écrits au schéma 6, ils sont refusés (« champ du
+  schéma 7, inconnu du schéma 6 »).
+- Monter au 7 : `schema = 7`, et la section entière :
+
+```ini
+[protection]
+	base-push = none
+	base-force-push = none
+	release-push = Compte-de-la-ci
+	merge = Proprietaire
+	status-contexts = checks / checks*
+	block-outdated = false
+	release-merge-style = merge
+```
+
+| Projet | `base-push` / `base-force-push` | `release-push` | `merge` | `status-contexts` | `block-outdated` | `release-merge-style` |
+|---|---|---|---|---|---|---|
+| ce dépôt | `none` / `none` | `none` (pas de branche de publication) | le compte propriétaire | `checks / checks*` | `true` | `none` |
+
+Les valeurs de chaque projet consommateur, et leur motif, s'écrivent dans son `workflow.config`, en
+commentaire de chaque champ ; son `AGENTS.md` les reprend.

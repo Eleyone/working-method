@@ -151,7 +151,7 @@ case_config_none_desactive_et_se_lit() {
 
 case_config_types_invalides() {
   local change
-  for change in workflow.schema=7 forge.repo=sans-barre "forge.base=a..b" "forge.base=-dev" \
+  for change in workflow.schema=8 forge.repo=sans-barre "forge.base=a..b" "forge.base=-dev" \
     "forge.branch-prefixes=feat/ fix" "forge.env-file=/etc/env" "forge.env-file=../.env" \
     "forge.env-file=a/./b" "sprint.convention=libre" review.report=courriel review.report=file review.timeout=15m \
     review.timeout=0 "review.exempt-paths=(" ci.bootstrap=yes bmad.version=6.12 \
@@ -722,6 +722,108 @@ case_config_agent_paths_valeurs_refusees() {
   load
   assert_eq 2 "$rc" "« \\. » hors guillemets est une erreur de syntaxe de git config"
   assert_contains "syntaxe refusée par git config" "$err" "le message des pièges de syntaxe"
+}
+
+# --- schéma 7 : la protection des branches (calculette#fix-protection-branches-dev-master) ------------
+
+# Un projet au schéma 7 : $@ = changements de plus. Les valeurs de base décrivent un projet dont la base
+# n'admet aucun push et dont la publication pousse par la CI.
+schema_7_config() {
+  schema_6_config workflow.schema=7 protection.base-push=none protection.base-force-push=none \
+    protection.release-push=Compte-robot protection.merge=Proprietaire "protection.status-contexts=checks / checks*" \
+    protection.block-outdated=false protection.release-merge-style=merge "$@"
+}
+
+readonly protection_fields="protection.base-push protection.base-force-push protection.release-push protection.merge protection.status-contexts protection.block-outdated protection.release-merge-style"
+
+case_config_schema_7_est_lu() {
+  schema_7_config
+  load
+  assert_eq 0 "$rc" "schéma 7 admis (messages : $err)"
+  config_load "$work/projet/workflow.config"
+  local contextes fusion style
+  config_get contextes protection.status-contexts
+  config_get fusion protection.merge
+  config_get style protection.release-merge-style
+  assert_eq "checks / checks* Proprietaire merge" "$contextes $fusion $style" "les valeurs sont rendues telles quelles, casse comprise"
+  schema_7_config "protection.base-push=Proprietaire Compte-robot" protection.base-force-push=Proprietaire \
+    "protection.status-contexts=checks / checks*, audit / audit (push)" protection.block-outdated=true \
+    protection.release-merge-style=fast-forward-only protection.release-push=none
+  load
+  assert_eq 0 "$rc" "listes de comptes, plusieurs motifs, fast-forward seul (messages : $err)"
+  schema_7_config protection.status-contexts=none protection.release-merge-style=none
+  load
+  assert_eq 0 "$rc" "aucun contexte exigé, aucun style de publication (messages : $err)"
+}
+
+case_config_schema_6_reste_lu_sans_protection() {
+  # Comme du 5 au 6 : aucune migration imposée. Le schéma 6 reste valide, et ses champs ne s'y lisent pas.
+  schema_6_config
+  load
+  assert_eq 0 "$rc" "un fichier au schéma 6 reste valide (messages : $err)"
+  config_load "$work/projet/workflow.config"
+  run config_get valeur protection.merge
+  assert_eq 2 "$rc" "protection.merge ne se lit pas dans un fichier au schéma 6"
+  assert_contains "champ « protection.merge » du schéma 7" "$err" "le schéma du champ est nommé"
+}
+
+case_config_schema_7_exige_ses_champs() {
+  local champ
+  for champ in $protection_fields; do
+    schema_7_config "-$champ"
+    load
+    assert_eq 2 "$rc" "$champ est requis au schéma 7 : aucune valeur par défaut"
+    assert_contains "$champ : champ absent" "$err" "le champ est nommé"
+  done
+}
+
+case_config_champs_du_schema_7_inconnus_du_schema_6() {
+  schema_6_config protection.merge=Proprietaire
+  load
+  assert_eq 2 "$rc" "protection.merge est inconnu du schéma 6"
+  assert_contains "protection.merge : champ du schéma 7, inconnu du schéma 6" "$err" "le champ et les schémas sont nommés"
+}
+
+case_config_schema_7_types_invalides() {
+  local change
+  for change in protection.merge=none "protection.merge=Pro prietaire Pro" protection.merge=-compte \
+    "protection.base-push=a,b" protection.base-push=compte/x protection.block-outdated=yes \
+    protection.release-merge-style=squash protection.release-merge-style=rebase \
+    "protection.status-contexts=checks,,audit" "protection.status-contexts=checks, checks" \
+    "protection.status-contexts=checks , " "protection.base-push=Proprietaire proprietaire" \
+    protection.base-push=None "protection.merge=Proprietaire NONE" $'protection.status-contexts=checks\tx' "protection.status-contexts=checks," \
+    "protection.status-contexts=,checks"; do
+    schema_7_config "$change"
+    load
+    assert_eq 2 "$rc" "valeur refusée : $change"
+    assert_contains "${change%%=*} :" "$err" "le champ est nommé : $change"
+    [[ $err != *inconnu* && $err != *absent* ]] || { echo "refusé pour une autre raison que le type ($change) : $err" >&2; exit 1; }
+  done
+}
+
+case_config_schema_7_regles_entre_champs() {
+  schema_7_config protection.base-force-push=Proprietaire
+  load
+  assert_eq 2 "$rc" "un push forcé sans push n'existe pas sur la forge"
+  assert_contains "protection.base-force-push : chaque compte doit aussi figurer dans protection.base-push" "$err" "la règle est nommée"
+  schema_7_config protection.base-push=Compte-robot protection.base-force-push=Proprietaire
+  load
+  assert_eq 2 "$rc" "un compte de push forcé absent de la liste de push"
+  assert_contains "Proprietaire" "$err" "le compte est nommé"
+  schema_7_config protection.base-push=proprietaire protection.base-force-push=Proprietaire
+  load
+  assert_eq 0 "$rc" "les comptes de la forge ne distinguent pas la casse (messages : $err)"
+  # un dépôt sans branche de publication ne déclare rien pour elle
+  schema_7_config forge.release-branch=none protection.release-push=none protection.release-merge-style=none
+  load
+  assert_eq 0 "$rc" "sans branche de publication, release-push et release-merge-style valent none (messages : $err)"
+  local champ
+  for champ in protection.release-push=Compte-robot protection.release-merge-style=merge; do
+    schema_7_config forge.release-branch=none protection.release-push=none protection.release-merge-style=none "$champ"
+    load
+    assert_eq 2 "$rc" "${champ%%=*} porte une valeur sans branche de publication"
+    assert_contains "${champ%%=*} : doit valoir « none » quand forge.release-branch vaut « none »" "$err" "la règle est nommée"
+  done
 }
 
 case_config_rapport_en_fichier_retire() {

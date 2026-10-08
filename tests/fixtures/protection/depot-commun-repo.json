@@ -1,0 +1,12 @@
+{
+  "full_name": "Eleyone/working-method",
+  "allow_merge_commits": false,
+  "allow_rebase": false,
+  "allow_rebase_explicit": false,
+  "allow_squash_merge": true,
+  "allow_fast_forward_only_merge": false,
+  "allow_manual_merge": false,
+  "default_merge_style": "squash",
+  "default_delete_branch_after_merge": true,
+  "default_branch": "main"
+}

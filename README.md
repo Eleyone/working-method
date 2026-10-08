@@ -9,9 +9,9 @@ Ce dépôt ne connaît aucun projet : tout ce qui est propre à un projet se dé
 | Dossier | Rôle |
 |---|---|
 | `bin/` | `install` (installation dans un projet, `procedures/adoption.md`), `check-bash` (prérequis bash 4.3, en POSIX sh) |
-| `lib/` | bibliothèques : `config.sh` (lecteur de `workflow.config`), `bmad.sh` (version de BMAD, configuration générée), `shell.sh`, `dotenv.sh`, `sprint.sh`, `require-bash.sh` |
+| `lib/` | bibliothèques : `config.sh` (lecteur de `workflow.config`), `bmad.sh` (version de BMAD, configuration générée), `protection.sh` et `protection.jq` (règle commune de protection des branches), `shell.sh`, `dotenv.sh`, `sprint.sh`, `require-bash.sh` |
 | `bmad/` | BMAD : `bmad.config` (version, modules, épinglages), `update.sh` (le seul endroit où l'installeur BMAD tourne), `method/` (ce qu'il produit, relié dans chaque projet ; `procedures/bmad.md`) |
-| `gitea/` | adaptateur de la forge (`gitea.sh`) et ouverture de PR (`create-pull-request.sh`) |
+| `gitea/` | adaptateur de la forge (`gitea.sh`), ouverture de PR (`create-pull-request.sh`) et contrôle de la protection des branches, en lecture seule (`check-branch-protection.sh`, `procedures/gitea-branches.md`) |
 | `gates/` | verrous de fusion (`verify-and-merge-pr.sh`, `merge-gates.sh`) et cohérence du suivi de sprint (`sprint-consistency.sh`) |
 | `review/` | revue par un LLM d'un autre fournisseur (`llm-review.sh`), consignes communes (`prompts/`), couche projet de ce dépôt (`self-layer.md`) |
 | `checks/` | mécanisme des contrôles bloquants d'un projet (`run-checks.sh`) |

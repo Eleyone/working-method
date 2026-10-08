@@ -1,4 +1,4 @@
-# workflow.config — ce qui est propre à un projet qui consomme le dépôt commun. Schéma 6.
+# workflow.config — ce qui est propre à un projet qui consomme le dépôt commun. Schéma 7.
 #
 # À la racine du projet, versionné. Format de git config, lu par
 # « git config -f workflow.config --no-includes --null --list ».
@@ -18,11 +18,12 @@
 # Description de chaque champ : procedures/workflow-config.md du dépôt commun.
 
 [workflow]
-	# version du schéma : 3, 4, 5 ou 6 ; le 4 ajoute sprint.non-story-files, qu'exige la convention keyed ;
+	# version du schéma : 3 à 7 ; le 4 ajoute sprint.non-story-files, qu'exige la convention keyed ;
 	# le 5 ajoute ci.statuses et ci.wait, qu'exige verify-and-merge-pr ; le 6 ajoute review.agent-paths, sans
-	# migration imposée (un fichier au schéma 5 reste valide). Un fichier au schéma 1 ou 2 est refusé avec ce
-	# qu'il faut changer
-	schema = 6
+	# migration imposée (un fichier au schéma 5 reste valide) ; le 7 ajoute la section [protection], sans
+	# migration imposée non plus (seul gitea/check-branch-protection.sh l'exige). Un fichier au schéma 1 ou 2
+	# est refusé avec ce qu'il faut changer
+	schema = 7
 
 [forge]
 	# dépôt sur la forge, « propriétaire/nom » ; le dépôt distant origin doit être celui-là
@@ -127,3 +128,23 @@
 [agents]
 	# dossiers où bin/install relie les skills du dépôt commun
 	skill-dirs = .claude/skills .agents/skills
+
+[protection]
+	# schéma 7 : les valeurs du projet de la règle commune de protection des branches, que relit
+	# gitea/check-branch-protection.sh (procedures/gitea-branches.md, « La règle commune »)
+	# comptes admis à pousser directement sur forge.base, séparés par une espace (désactivable : aucun push)
+	base-push = none
+	# comptes admis à pousser en force sur forge.base, chacun aussi dans base-push (désactivable)
+	base-force-push = none
+	# comptes admis à pousser sur forge.release-branch, par exemple le compte d'une CI de publication
+	# (désactivable ; none obligatoire sans branche de publication). Le push forcé y est toujours fermé
+	release-push = none
+	# comptes admis à fusionner une PR sur les deux branches (non désactivable)
+	merge = Proprietaire
+	# motifs des contextes de statut exigés par la forge, séparés par une virgule (désactivable)
+	status-contexts = checks / checks*
+	# une PR en retard sur sa base doit être mise à jour avant sa fusion : true ou false
+	block-outdated = false
+	# style de la publication, seul ouvert à côté du squash : merge ou fast-forward-only (désactivable ;
+	# none obligatoire sans branche de publication)
+	release-merge-style = merge
