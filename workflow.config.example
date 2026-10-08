@@ -145,6 +145,5 @@
 	status-contexts = checks / checks*
 	# une PR en retard sur sa base doit être mise à jour avant sa fusion : true ou false
 	block-outdated = false
-	# style de la publication, seul ouvert à côté du squash : merge ou fast-forward-only (désactivable ;
-	# none obligatoire sans branche de publication)
-	release-merge-style = merge
+	# les styles de fusion ne se déclarent pas : squash vers la base, avance rapide uniquement vers la
+	# publication, fixés par la règle commune

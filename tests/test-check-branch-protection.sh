@@ -79,8 +79,7 @@ projet() {
   write_workflow_config "$depot" "forge.repo=$repo" workflow.schema=7 sprint.non-story-files=none \
     ci.statuses=context ci.wait=0 review.agent-paths=none \
     protection.base-push=none protection.base-force-push=none protection.release-push=Compte-robot \
-    protection.merge=Proprietaire "protection.status-contexts=checks / checks*" protection.block-outdated=false \
-    protection.release-merge-style=merge "$@"
+    protection.merge=Proprietaire "protection.status-contexts=checks / checks*" protection.block-outdated=false "$@"
   printf '.env\n' > "$depot/.gitignore"
   printf 'GITEA_URL=https://forge.example.invalid\nGITEA_USER=compte-essai\nGITEA_TOKEN=jeton-essai\n' > "$depot/.env"
   commit_all base > /dev/null
@@ -122,19 +121,19 @@ accounts_json() { # $1 valeur d'un champ de comptes ; affiche sa liste JSON, ou 
 }
 
 forge_conforme() {
-  local cfg=$depot/workflow.config base release style rules
+  local cfg=$depot/workflow.config base release rules
   base=$(git config -f "$cfg" forge.base)
   release=$(git config -f "$cfg" forge.release-branch)
-  style=$(git config -f "$cfg" protection.release-merge-style)
   rules=$(regle "$base" "$(accounts_json "$(git config -f "$cfg" protection.base-push)")" \
     "$(accounts_json "$(git config -f "$cfg" protection.base-force-push)")")
   if [[ $release != none ]]; then
     rules+=$'\n'$(regle "$release" "$(accounts_json "$(git config -f "$cfg" protection.release-push)")" null)
   fi
   api GET "/repos/$repo/branch_protections" "$(jq -s . <<< "$rules")"
-  api GET "/repos/$repo" "$(jq -n --arg s "$style" '{full_name: "Proprietaire/projet-essai",
-    allow_merge_commits: ($s == "merge"), allow_rebase: false, allow_rebase_explicit: false,
-    allow_squash_merge: true, allow_fast_forward_only_merge: ($s == "fast-forward-only"),
+  # styles de la règle commune : squash, et avance rapide uniquement s'il y a une branche de publication
+  api GET "/repos/$repo" "$(jq -n --arg r "$release" '{full_name: "Proprietaire/projet-essai",
+    allow_merge_commits: false, allow_rebase: false, allow_rebase_explicit: false,
+    allow_squash_merge: true, allow_fast_forward_only_merge: ($r != "none"),
     allow_manual_merge: false, default_merge_style: "squash", default_branch: "dev"}')"
   api GET "/repos/$repo/keys?limit=50&page=1" '[{"id":3,"title":"lecture","read_only":true}]'
   api GET "/repos/$repo/keys?limit=50&page=2" '[]'
@@ -166,17 +165,17 @@ case_conforme_rend_0_et_dit_ses_limites() {
   aucune_ecriture
 }
 
-case_conforme_avec_listes_de_push_et_fast_forward() {
+case_conforme_avec_listes_de_push() {
   projet "protection.base-push=Proprietaire Compte-robot" protection.base-force-push=Proprietaire \
-    protection.release-merge-style=fast-forward-only protection.block-outdated=true
+    protection.block-outdated=true
   # la forge rend les comptes dans un autre ordre et une autre casse : ni l'un ni l'autre ne compte
   change "/repos/$repo/branch_protections" '.[0].push_whitelist_usernames = ["compte-robot", "Proprietaire"]'
   controle
-  assert_eq 0 "$rc" "listes de push et fast-forward seul conformes (sortie : $out ; erreurs : $err)"
+  assert_eq 0 "$rc" "listes de push conformes (sortie : $out ; erreurs : $err)"
 }
 
 case_sans_branche_de_publication() {
-  projet forge.release-branch=none protection.release-push=none protection.release-merge-style=none
+  projet forge.release-branch=none protection.release-push=none
   controle
   assert_eq 0 "$rc" "un dépôt sans branche de publication n'a qu'une règle (sortie : $out ; erreurs : $err)"
   assert_contains "sans branche de publication" "$out" "la sortie le dit"
@@ -242,14 +241,27 @@ case_ecart_branche_a_jour_et_contournement() {
 
 case_ecart_styles_de_fusion() {
   projet
-  change "/repos/$repo" '.allow_merge_commits = false | .allow_rebase = true | .default_merge_style = "merge"'
-  ecart "dépôt : allow_merge_commits : lu false, attendu true" "le style de publication fermé"
+  change "/repos/$repo" '.allow_fast_forward_only_merge = false | .allow_merge_commits = true | .allow_rebase = true | .default_merge_style = "merge"'
+  ecart "dépôt : allow_fast_forward_only_merge : lu false, attendu true" "l'avance rapide de la publication fermée"
+  assert_contains "dépôt : allow_merge_commits : lu true, attendu false" "$out" "le commit de fusion est fermé par la règle commune"
   assert_contains "dépôt : allow_rebase : lu true, attendu false" "$out" "un style qu'aucun chemin n'emploie"
   assert_contains "dépôt : default_merge_style : lu merge, attendu squash" "$out" "le style par défaut"
   assert_contains "Paramètres → Dépôt → Paramètres avancés → Demandes d'ajout" "$out" "l'écran des styles est nommé"
-  assert_contains "Styles de fusion — Créer une révision de fusion : cochée  ← à changer (lu : décochée)" "$out" "le style à ouvrir"
+  assert_contains "Styles de fusion — Avance rapide uniquement : cochée  ← à changer (lu : décochée)" "$out" "le style à ouvrir"
+  assert_contains "Styles de fusion — Créer une révision de fusion : décochée  ← à changer (lu : cochée)" "$out" "le style à fermer"
   assert_contains "Méthode de fusion par défaut : « Créer une révision de concaténation »  ← à changer" "$out" "le défaut à poser"
   assert_contains "« Appliquer »" "$out" "le bouton de l'écran"
+  # chaque autre style, ouvert seul, est un écart
+  local champ
+  for champ in allow_merge_commits allow_rebase_explicit allow_manual_merge; do
+    projet
+    change "/repos/$repo" ".$champ = true"
+    ecart "dépôt : $champ : lu true, attendu false" "$champ ouvert"
+  done
+  # sans branche de publication, l'avance rapide n'a aucun chemin : ouverte, elle est un écart
+  projet forge.release-branch=none protection.release-push=none
+  change "/repos/$repo" '.allow_fast_forward_only_merge = true'
+  ecart "dépôt : allow_fast_forward_only_merge : lu true, attendu false" "avance rapide sans branche de publication"
 }
 
 case_ecart_cle_de_deploiement() {

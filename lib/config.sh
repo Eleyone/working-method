@@ -91,7 +91,6 @@ declare -gA config_schema=(
   [protection.merge]=accounts
   [protection.status-contexts]=?contexts
   [protection.block-outdated]=boolean
-  [protection.release-merge-style]=?merge-style
 )
 # Le schéma à partir duquel un champ existe ; un champ absent de cette table existe depuis le schéma 1.
 # Il sert aux messages : un fichier d'un schéma ancien est refusé, mais chaque écart y est nommé.
@@ -110,12 +109,12 @@ declare -gA config_since_schema=(
   [protection.merge]=7
   [protection.status-contexts]=7
   [protection.block-outdated]=7
-  [protection.release-merge-style]=7
 )
 # Les champs retirés, et ce qui les remplace : présents, ils font refuser le fichier avec la nouvelle
 # forme, quel que soit le schéma déclaré — jamais une clé ignorée en silence.
 declare -gA config_removed=(
   [review.reviewer-for-claude]="retiré au schéma 3 : la table review.reviewers le remplace, une entrée « auteur=modèle » par fournisseur d'auteur (« reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-5-5-high »)"
+  [protection.release-merge-style]="retiré du schéma 7 le 08/10/2026 : les styles de fusion ne sont plus un choix du projet — squash vers forge.base, avance rapide uniquement vers forge.release-branch, fixés par la règle commune (procedures/gitea-branches.md) ; supprimer la ligne"
   [review.reviewer-for-gemini]="retiré au schéma 3 : la table review.reviewers le remplace, une entrée « auteur=modèle » par fournisseur d'auteur (« reviewers = claude=gemini-3.1-pro-high gemini=claude-opus-5-5-high »)"
 )
 declare -gA config_values=()
@@ -260,12 +259,6 @@ config_check_type() {
         [[ -z ${seen_contexts[$context]+x} ]] || { echo "« $context » écrit deux fois dans la liste"; return 1; }
         seen_contexts[$context]=1
       done
-      ;;
-    merge-style)
-      case $value in
-        merge|fast-forward-only) ;;
-        *) echo "« merge » ou « fast-forward-only » attendu (ou « none ») : le style de la publication, ouvert à côté du squash"; return 1 ;;
-      esac
       ;;
     *) echo "type « $type » inconnu du lecteur"; return 1 ;;
   esac
@@ -544,11 +537,8 @@ config_protection_rules() {
   fi
   # un dépôt sans branche de publication ne déclare rien pour elle
   if [[ ${prot_values[forge.release-branch]} == none ]]; then
-    local field
-    for field in protection.release-push protection.release-merge-style; do
-      [[ ${prot_values[$field]} == none ]] \
-        || prot_problems+=("$field : doit valoir « none » quand forge.release-branch vaut « none ».")
-    done
+    [[ ${prot_values[protection.release-push]} == none ]] \
+      || prot_problems+=("protection.release-push : doit valoir « none » quand forge.release-branch vaut « none ».")
   fi
 }
 

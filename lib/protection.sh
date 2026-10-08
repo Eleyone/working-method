@@ -23,7 +23,7 @@
 
 # $1 = fichier à écrire
 protection_expected() {
-  local out=$1 base release base_push base_force release_push merge contexts outdated style
+  local out=$1 base release base_push base_force release_push merge contexts outdated
   config_get base forge.base || return 2
   config_get release forge.release-branch || return 2
   config_get base_push protection.base-push || return 2
@@ -32,10 +32,9 @@ protection_expected() {
   config_get merge protection.merge || return 2
   config_get contexts protection.status-contexts || return 2
   config_get outdated protection.block-outdated || return 2
-  config_get style protection.release-merge-style || return 2
   jq -n --arg base "$base" --arg release "$release" --arg base_push "$base_push" --arg base_force "$base_force" \
     --arg release_push "$release_push" --arg merge "$merge" --arg contexts "$contexts" \
-    --argjson outdated "$outdated" --arg style "$style" '
+    --argjson outdated "$outdated" '
     def accounts: if . == "none" then null else split(" ") end;
     {
       branches: ([{name: $base, role: "base", push: ($base_push | accounts), force_push: ($base_force | accounts)}]
@@ -45,7 +44,9 @@ protection_expected() {
       contexts: (if $contexts == "none" then null
         else $contexts | split(",") | map(gsub("^\\s+|\\s+$"; "")) end),
       block_outdated: $outdated,
-      release_style: (if $style == "none" then null else $style end)
+      # styles fixés par la règle commune : squash vers la base ; avance rapide uniquement vers la
+      # publication, quand il y en a une (sans elle, aucun chemin ne l emploie)
+      release_style: (if $release == "none" then null else "fast-forward-only" end)
     }' > "$out" || return 2
 }
 

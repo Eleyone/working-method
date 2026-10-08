@@ -28,13 +28,17 @@ branche est un **écart** (code `1`), à supprimer (décision I du 08/10/2026).
 | `protection.merge` | les deux règles : `enable_merge_whitelist: true`, `merge_whitelist_usernames` | *Fusion de demande d'ajout* : « Fusion sur autorisation uniquement », *Utilisateurs autorisés à fusionner* |
 | `protection.status-contexts` | les deux règles : `enable_status_check`, `status_check_contexts` | *Activer le Contrôle Qualité*, *Motifs de vérification des statuts* |
 | `protection.block-outdated` | les deux règles : `block_on_outdated_branch` | *Bloquer la fusion si la demande d'ajout est obsolète* |
-| `protection.release-merge-style` | dépôt (`GET /repos/<dépôt>`) : `allow_merge_commits` (`merge`) ou `allow_fast_forward_only_merge` (`fast-forward-only`) | *Paramètres avancés → Demandes d'ajout → Styles de fusion* |
 
 « Pas de push direct, pas de push forcé » est le **défaut** (`none`), que le projet lève par une valeur
 écrite, avec son motif en commentaire — jamais une interdiction absolue : un projet dont le correctif de
 production rebase sa branche de travail et la pousse en force déclare ce compte dans `base-push` **et**
-`base-force-push` (la forge n'admet un push forcé qu'à un compte qui peut déjà pousser) ; un projet dont la
-CI pousse le commit de publication déclare ce compte dans `release-push`.
+`base-force-push` (la forge n'admet un push forcé qu'à un compte qui peut déjà pousser).
+
+⚠️ **`release-push` vaut `none` dans la cible** : la publication arrive en avance rapide, rien ne commite
+directement sur la branche de publication (« La publication arrive en avance rapide », ci-dessous). Le champ
+reste pour la **transition** d'un projet dont la CI pousse encore un commit sur sa branche de publication
+(commit de version ou de changelog) : il déclare ce compte, avec en commentaire le ticket qui retire ce push.
+Pousser une **étiquette** n'est pas pousser sur la branche : le tag de publication n'a pas besoin de ce champ.
 
 ### Ce que la règle fixe, pour tous
 
@@ -49,15 +53,48 @@ CI pousse le commit de publication déclare ce compte dans `release-push`.
 | `required_approvals` | `0` | une seule personne relit ; la revue croisée est celle d'un LLM, vérifiée par `verify-and-merge-pr` |
 | `require_signed_commits` | `false` | ni les agents ni les CI de publication ne signent |
 | `protected_file_patterns`, `unprotected_file_patterns` | vides | un motif refuserait un push sans que rien ne le dise à l'outillage |
-| `allow_squash_merge` | `true` | `verify-and-merge-pr` fusionne toujours en squash vers `forge.base` |
-| `allow_rebase`, `allow_rebase_explicit`, `allow_manual_merge` | `false` | aucun chemin de l'outillage ne les emploie |
-| `allow_merge_commits`, `allow_fast_forward_only_merge` | `true` seulement pour le style déclaré (`protection.release-merge-style`) | le style de la publication est propre au projet : le commit de fusion enregistre la réconciliation des deux branches, le fast-forward seul garde l'historique linéaire |
-| `default_merge_style` | `squash` | l'interface propose le style de l'outillage |
+| `allow_squash_merge` | `true` | vers `forge.base`, **squash seul** : `verify-and-merge-pr` fusionne toujours en squash, un commit par PR |
+| `allow_fast_forward_only_merge` | `true` si le projet a une branche de publication, `false` sinon | vers `forge.release-branch`, **avance rapide uniquement** : les commits de la branche de travail y arrivent tels quels, avec les mêmes SHA, et la fusion est refusée si la publication a un commit que la branche de travail n'a pas. Sans branche de publication, aucun chemin ne l'emploie |
+| `allow_merge_commits`, `allow_rebase`, `allow_rebase_explicit`, `allow_manual_merge` | `false` | commit de fusion, « rebaser puis rattraper », « rebaser puis créer une révision de fusion », fusion manuelle : aucun chemin ne les emploie. Un commit de fusion ou un rebase crée sur la publication des commits que la branche de travail n'a pas, et casse l'avance rapide suivante |
+| `default_merge_style` | `squash` | l'interface propose le style des PR vers la branche de travail |
 
-Les styles de fusion se règlent **par dépôt**, pas par branche : la règle ne peut pas imposer le squash vers
-`forge.base` et le style de publication vers `forge.release-branch` ; chaque script impose le sien par l'API
-(« Pourquoi le style n'est pas fixé par branche », ci-dessous). ⛔ Fermer le style de publication d'un projet
-casse sa publication.
+Correction d'Arnaud du 08/10/2026, **commune à tous les projets** : les styles de fusion ne sont pas un choix
+du projet (le champ `protection.release-merge-style` de la première version du schéma 7 est retiré,
+`workflow-config.md`). Gitea les règle **par dépôt**, pas par branche : les styles ouverts sont donc squash
+**et** avance rapide uniquement, squash par défaut, et chaque script impose le bon par l'API selon la base
+(« Pourquoi le style n'est pas fixé par branche », ci-dessous). Tout autre style ouvert est un écart.
+
+### La publication arrive en avance rapide
+
+La contrainte qui en découle : ⛔ **la release et les correctifs de production ne commitent jamais
+directement sur la branche de publication.** Une avance rapide exige que la branche de publication soit un
+ancêtre de la branche de travail ; un seul commit posé sur elle seule — un commit de version, une ligne de
+changelog écrite par la CI, un correctif poussé à la main — rend la publication suivante impossible
+(`500`, `Merge DivergingFastForwardOnly`), et ne se rattrape que par un commit de fusion ou une réécriture,
+deux gestes que la règle ferme.
+
+- **Ce qui doit figurer dans la publication** (changelog, numéro de version) **passe d'abord par la branche de
+  travail**, par une PR fusionnée en squash comme les autres : la publication ne fait qu'avancer la branche
+  de publication jusqu'à un commit déjà relu.
+- **Le tag se pose sur le commit arrivé en avance rapide**, relu sur la forge **après** la fusion : la fusion
+  passe par l'API et ne met pas à jour le dépôt local, si bien qu'un `git tag` sans relecture se poserait sur
+  l'ancienne tête.
+- **Un correctif de production** part de la branche de publication (`hotfix/<nom>`), y arrive en avance
+  rapide, reçoit son tag ; puis la **branche de travail est rebasée** sur la branche de publication et
+  poussée en `--force-with-lease`, ce que le projet déclare dans `base-push` et `base-force-push`. Jamais de
+  `cherry-pick` : un commit recopié a un autre SHA, et casserait l'avance rapide suivante.
+
+**Le modèle, dans le projet source** (à lire, pas à recopier ; ses scripts sont propres à lui) :
+
+- `scripts/release.sh <tag> [--merge]` : vérifie que la branche de publication est un ancêtre de la branche
+  de travail (sinon refus, et renvoi au correctif de production), ouvre la PR de publication, en audite les
+  verrous, la fusionne par l'API en `"Do": "fast-forward-only"` avec `head_commit_id`, relit la branche de
+  publication sur la forge, et refuse de taguer si elle ne porte pas le commit publié ; puis pose et pousse le
+  tag, que le workflow de livraison prend en charge.
+- `scripts/hotfix.sh start | publish [--merge] | sync [--push]` : branche `hotfix/<nom>` tirée de la
+  publication, fusion en avance rapide, tag de correctif calculé, puis rebase de la branche de travail sur la
+  publication, poussée en `--force-with-lease` dont le bail est la tête lue **avant** le rebase.
+- `--merge` et `--push` y sont l'affaire du responsable du projet : les scripts ne les déduisent jamais.
 
 **Non relus** (limite, écrite aussi dans la sortie du contrôle) : les protections d'**étiquettes** (`v*`,
 `staging-*`…) — un `0` ne dit rien d'elles ; une **autre branche durable** sans règle n'est pas détectée ; la
@@ -159,7 +196,7 @@ Réglé à sa création (story outillage-14, phase A, 03/10/2026) et vérifié p
 | Branche par défaut | `main`, seule branche durable |
 | Styles de fusion | squash **seul** (`allow_merge_commits`, `allow_rebase`, `allow_rebase_explicit`, `allow_fast_forward_only_merge`, `allow_manual_merge` à `false`) ; branche supprimée après fusion |
 | Protection de `main` | `enable_push: false`, `enable_force_push: false`, fusion réservée au compte propriétaire (`merge_whitelist_usernames`), contexte exigé `checks / checks*`, `block_on_outdated_branch: true`, 0 approbation |
-| Section `[protection]` de son `workflow.config` | `base-push = none`, `base-force-push = none`, `release-push = none`, `merge` = le compte propriétaire, `status-contexts = checks / checks*`, `block-outdated = true`, `release-merge-style = none` |
+| Section `[protection]` de son `workflow.config` | `base-push = none`, `base-force-push = none`, `release-push = none`, `merge` = le compte propriétaire, `status-contexts = checks / checks*`, `block-outdated = true` ; styles : squash seul (sans branche de publication, l'avance rapide n'a aucun chemin) |
 
 Cette protection est le **modèle** de la règle commune : le contrôle rend `0` sur elle (relevé du 08/10/2026,
 rejoué par `tests/test-check-branch-protection.sh` sur une copie figée de la réponse de l'API).

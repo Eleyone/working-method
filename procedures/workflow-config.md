@@ -97,7 +97,6 @@ BMAD du projet.
 | `protection.merge` *(schéma 7)* | comptes | non | `check-branch-protection` : qui peut fusionner une PR sur les deux branches |
 | `protection.status-contexts` *(schéma 7)* | motifs de contextes de statut, séparés par une virgule (`checks / checks*`) | **oui** (`none` : aucun contexte exigé) | `check-branch-protection` : contextes exigés par la forge sur les deux branches |
 | `protection.block-outdated` *(schéma 7)* | `true` \| `false` | non | `check-branch-protection` : `block_on_outdated_branch` des deux règles |
-| `protection.release-merge-style` *(schéma 7)* | `merge` \| `fast-forward-only` | **oui** (`none` : le squash seul) ; `none` obligatoire sans branche de publication | `check-branch-protection` : style de la publication, seul ouvert à côté du squash |
 | `module.<nom>.<clé>` *(optionnel)* | valeur du modèle du module (ci-dessous) | — | `bin/install` : surcharge de la configuration générée du module |
 
 Un **motif de nom** (`sprint.non-story-files`) se compare au nom d'un fichier du dossier des stories, sans
@@ -177,9 +176,17 @@ projet qui en veut d'autres les **surcharge** :
   toute autre convention.
 - Au schéma 7 : chaque compte de `protection.base-force-push` figure aussi dans `protection.base-push` (la
   forge n'admet un push forcé qu'à un compte qui peut déjà pousser) ; `forge.release-branch = none` exige
-  `none` sur `protection.release-push` et `protection.release-merge-style`.
+  `none` sur `protection.release-push`.
 
 ### Valeurs retirées
+
+`protection.release-merge-style` figurait dans la première version du schéma 7 (working-method#22). La
+correction d'Arnaud du 08/10/2026 fixe les styles de fusion pour tous les projets — squash vers
+`forge.base`, avance rapide uniquement vers `forge.release-branch` (`gitea-branches.md`) — : ils ne sont plus
+un choix du projet. Le champ est **retiré du schéma 7 lui-même**, sans schéma 8 : seuls deux projets avaient
+déclaré la section, l'un dans une PR non fusionnée, et un schéma 8 aurait fait lire aux outils un schéma 7
+dont un champ ne veut plus rien dire. Présent, il est refusé en `2`, avec le geste à faire (« supprimer la
+ligne »), jamais ignoré.
 
 `review.report = file` (rapport de revue en fichier local) était posé pour `calculette#outillage-8`, qui
 a tranché l'inverse : le rapport est un commentaire de la PR, que le verrou de revue lit. Aucun outil
@@ -288,7 +295,7 @@ squash ouvert et style par défaut…) n'y figure pas : seul ce qui varie d'un p
 - **Aucune migration imposée**, comme du 5 au 6 : un fichier au schéma 6 reste valide pour tous les outils,
   `verify-and-merge-pr` compris. Seul `gitea/check-branch-protection.sh` exige le 7, et refuse en `2` un
   fichier d'un schéma antérieur, avant tout appel à la forge.
-- Au schéma 7, les sept champs sont **obligatoires** ; écrits au schéma 6, ils sont refusés (« champ du
+- Au schéma 7, les six champs sont **obligatoires** ; écrits au schéma 6, ils sont refusés (« champ du
   schéma 7, inconnu du schéma 6 »).
 - Monter au 7 : `schema = 7`, et la section entière :
 
@@ -300,12 +307,11 @@ squash ouvert et style par défaut…) n'y figure pas : seul ce qui varie d'un p
 	merge = Proprietaire
 	status-contexts = checks / checks*
 	block-outdated = false
-	release-merge-style = merge
 ```
 
-| Projet | `base-push` / `base-force-push` | `release-push` | `merge` | `status-contexts` | `block-outdated` | `release-merge-style` |
-|---|---|---|---|---|---|---|
-| ce dépôt | `none` / `none` | `none` (pas de branche de publication) | le compte propriétaire | `checks / checks*` | `true` | `none` |
+| Projet | `base-push` / `base-force-push` | `release-push` | `merge` | `status-contexts` | `block-outdated` |
+|---|---|---|---|---|---|
+| ce dépôt | `none` / `none` | `none` (pas de branche de publication) | le compte propriétaire | `checks / checks*` | `true` |
 
 Les valeurs de chaque projet consommateur, et leur motif, s'écrivent dans son `workflow.config`, en
 commentaire de chaque champ ; son `AGENTS.md` les reprend.

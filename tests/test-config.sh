@@ -731,29 +731,28 @@ case_config_agent_paths_valeurs_refusees() {
 schema_7_config() {
   schema_6_config workflow.schema=7 protection.base-push=none protection.base-force-push=none \
     protection.release-push=Compte-robot protection.merge=Proprietaire "protection.status-contexts=checks / checks*" \
-    protection.block-outdated=false protection.release-merge-style=merge "$@"
+    protection.block-outdated=false "$@"
 }
 
-readonly protection_fields="protection.base-push protection.base-force-push protection.release-push protection.merge protection.status-contexts protection.block-outdated protection.release-merge-style"
+readonly protection_fields="protection.base-push protection.base-force-push protection.release-push protection.merge protection.status-contexts protection.block-outdated"
 
 case_config_schema_7_est_lu() {
   schema_7_config
   load
   assert_eq 0 "$rc" "schéma 7 admis (messages : $err)"
   config_load "$work/projet/workflow.config"
-  local contextes fusion style
+  local contextes fusion
   config_get contextes protection.status-contexts
   config_get fusion protection.merge
-  config_get style protection.release-merge-style
-  assert_eq "checks / checks* Proprietaire merge" "$contextes $fusion $style" "les valeurs sont rendues telles quelles, casse comprise"
+  assert_eq "checks / checks* Proprietaire" "$contextes $fusion" "les valeurs sont rendues telles quelles, casse comprise"
   schema_7_config "protection.base-push=Proprietaire Compte-robot" protection.base-force-push=Proprietaire \
     "protection.status-contexts=checks / checks*, audit / audit (push)" protection.block-outdated=true \
-    protection.release-merge-style=fast-forward-only protection.release-push=none
+    protection.release-push=none
   load
-  assert_eq 0 "$rc" "listes de comptes, plusieurs motifs, fast-forward seul (messages : $err)"
-  schema_7_config protection.status-contexts=none protection.release-merge-style=none
+  assert_eq 0 "$rc" "listes de comptes, plusieurs motifs, (messages : $err)"
+  schema_7_config protection.status-contexts=none
   load
-  assert_eq 0 "$rc" "aucun contexte exigé, aucun style de publication (messages : $err)"
+  assert_eq 0 "$rc" "aucun contexte exigé (messages : $err)"
 }
 
 case_config_schema_6_reste_lu_sans_protection() {
@@ -788,7 +787,6 @@ case_config_schema_7_types_invalides() {
   local change
   for change in protection.merge=none "protection.merge=Pro prietaire Pro" protection.merge=-compte \
     "protection.base-push=a,b" protection.base-push=compte/x protection.block-outdated=yes \
-    protection.release-merge-style=squash protection.release-merge-style=rebase \
     "protection.status-contexts=checks,,audit" "protection.status-contexts=checks, checks" \
     "protection.status-contexts=checks , " "protection.base-push=Proprietaire proprietaire" \
     protection.base-push=None "protection.merge=Proprietaire NONE" $'protection.status-contexts=checks\tx' "protection.status-contexts=checks," \
@@ -814,15 +812,25 @@ case_config_schema_7_regles_entre_champs() {
   load
   assert_eq 0 "$rc" "les comptes de la forge ne distinguent pas la casse (messages : $err)"
   # un dépôt sans branche de publication ne déclare rien pour elle
-  schema_7_config forge.release-branch=none protection.release-push=none protection.release-merge-style=none
+  schema_7_config forge.release-branch=none protection.release-push=none
   load
-  assert_eq 0 "$rc" "sans branche de publication, release-push et release-merge-style valent none (messages : $err)"
-  local champ
-  for champ in protection.release-push=Compte-robot protection.release-merge-style=merge; do
-    schema_7_config forge.release-branch=none protection.release-push=none protection.release-merge-style=none "$champ"
+  assert_eq 0 "$rc" "sans branche de publication, release-push vaut none (messages : $err)"
+  schema_7_config forge.release-branch=none
+  load
+  assert_eq 2 "$rc" "release-push porte une valeur sans branche de publication"
+  assert_contains "protection.release-push : doit valoir « none » quand forge.release-branch vaut « none »" "$err" "la règle est nommée"
+}
+
+case_config_release_merge_style_retire() {
+  # Correction d'Arnaud du 08/10/2026 : les styles de fusion sont fixés par la règle commune. Le champ,
+  # présent dans la première version du schéma 7, est refusé avec ce qu'il faut faire, jamais ignoré.
+  local valeur
+  for valeur in merge fast-forward-only none; do
+    schema_7_config "protection.release-merge-style=$valeur"
     load
-    assert_eq 2 "$rc" "${champ%%=*} porte une valeur sans branche de publication"
-    assert_contains "${champ%%=*} : doit valoir « none » quand forge.release-branch vaut « none »" "$err" "la règle est nommée"
+    assert_eq 2 "$rc" "protection.release-merge-style est refusé ($valeur)"
+    assert_contains "protection.release-merge-style : retiré du schéma 7" "$err" "le retrait est nommé"
+    assert_contains "supprimer la ligne" "$err" "le geste est dit"
   done
 }
 
