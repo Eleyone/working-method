@@ -8,6 +8,30 @@
 # Chaque cas dispose d'un dossier temporaire $work, supprimé à la fin.
 set -euo pipefail
 
+# Aucun processus git détaché ne doit survivre à un cas. Chaque commit lance « git maintenance run
+# --auto --detach », qui continue après la fin du cas : s'il réécrivait le dépôt d'essai (repack,
+# prune-packed) pendant le « rm -rf » de fin de cas (trap ci-dessous), rm échouerait sur un fichier
+# disparu ou un dossier recréé, sans rapport avec le code du cas (piège « processus git détaché » de
+# procedures/shell-scripts.md). La configuration passe par l'environnement, et non par chaque dépôt :
+# elle vaut pour tout dépôt que le cas crée, clone ou fait créer à un script testé, sous-modules
+# compris. Elle s'ajoute à celle que l'appelant aurait déjà injectée, sans la remplacer, et elle est
+# posée avant le premier appel à git : un compte injecté illisible est nommé ici, et non par l'échec
+# du premier git venu.
+#   maintenance.auto=false  aucune maintenance automatique après un commit, un fetch ou une fusion ;
+#   gc.auto=0               aucun « git gc --auto », par la maintenance ou par une autre commande ;
+#   core.fsmonitor=false    aucun démon fsmonitor, même si la configuration du poste l'active.
+tests_git_config() {
+  local n=${GIT_CONFIG_COUNT:-0} pair
+  [[ $n =~ ^[0-9]+$ ]] || { echo "tests: GIT_CONFIG_COUNT illisible : $n" >&2; exit 2; }
+  n=$((10#$n)) # « 08 » est un compte valable pour git, pas un octal
+  for pair in maintenance.auto=false gc.auto=0 core.fsmonitor=false; do
+    export "GIT_CONFIG_KEY_$n=${pair%%=*}" "GIT_CONFIG_VALUE_$n=${pair#*=}"
+    n=$((n + 1))
+  done
+  export GIT_CONFIG_COUNT=$n
+}
+tests_git_config
+
 # tests_dir est le dossier de cette bibliothèque et common la racine du dépôt commun ; root est la racine du dépôt
 # git qui porte le fichier de test, et fixtures le dossier « fixtures » voisin de ce fichier. Un
 # projet consommateur qui charge cette bibliothèque depuis ses propres tests garde donc ses chemins,

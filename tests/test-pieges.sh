@@ -103,4 +103,87 @@ case_piege_point_de_regex_traverse_les_lignes() {
   [[ $une != *$'\n'* && $une =~ $motif ]] || { echo "parade : une ligne seule passe" >&2; exit 1; }
 }
 
+case_piege_processus_git_detache_apres_un_commit() {
+  # Un commit lance « git maintenance run --auto --detach », qui survit à la commande : ce processus
+  # peut encore écrire dans le dépôt d'essai pendant le « rm -rf » de fin de cas.
+  new_repo
+  printf 'a\n' > "$work/depot/a"
+  git -C "$work/depot" add a
+  # Constat, sans la parade de tests/lib.sh : GIT_CONFIG_COUNT=0 retire la configuration injectée.
+  # La maintenance est seulement gardée au premier plan (autoDetach), pour que ce constat ne laisse
+  # lui-même aucun processus derrière lui.
+  local lance
+  GIT_CONFIG_COUNT=0 GIT_TRACE2_EVENT="$work/trace-sans" \
+    git -C "$work/depot" -c maintenance.autoDetach=false commit -q -m sans
+  shell_grep_into lance -c '"child_start".*"maintenance","run","--auto"' "$work/trace-sans"
+  assert_eq 1 "$lance" "constat : sans la parade, le commit lance une maintenance automatique"
+  # Parade : la configuration injectée par tests/lib.sh vaut pour chaque dépôt d'essai, qu'il soit
+  # créé par new_repo, par un « git init » direct ou cloné en sous-module.
+  local depot cle
+  git -C "$work" init -q nu
+  git -C "$work/nu" -c user.name=essai -c user.email=essai@example.invalid -c core.hooksPath=/dev/null \
+    commit -q --allow-empty -m nu
+  git -C "$work/depot" -c protocol.file.allow=always submodule add -q "$work/nu" sous-module
+  for depot in depot nu depot/sous-module; do
+    for cle in maintenance.auto=false gc.auto=0 core.fsmonitor=false; do
+      assert_eq "${cle#*=}" "$(git -C "$work/$depot" config --get "${cle%%=*}")" "parade : ${cle%%=*} dans $depot"
+    done
+  done
+  printf 'b\n' > "$work/depot/b"
+  git -C "$work/depot" add b
+  GIT_TRACE2_EVENT="$work/trace-avec" git -C "$work/depot" commit -q -m avec
+  shell_grep_into lance -c '"child_start".*"maintenance"' "$work/trace-avec"
+  assert_eq 0 "$lance" "parade : le commit ne lance plus aucune maintenance"
+}
+
+# Un fichier de test minimal, dans un dépôt d'essai, qui charge tests/lib.sh et affiche la configuration
+# injectée : la parade s'éprouve au chargement de la bibliothèque, comme dans un vrai fichier de test.
+charge_lib() { # $1 = valeur de GIT_CONFIG_COUNT (« - » : absente), $2… = variables d'environnement
+  local compte=$1
+  shift
+  new_repo
+  {
+    printf '. %s\n' "$(sh_quote "$tests_dir/lib.sh")"
+    cat <<'FIN'
+case_affiche() {
+  git -C "$work" config --get-regexp '^(essai\.cle|maintenance\.auto|gc\.auto|core\.fsmonitor)$' | LC_ALL=C sort
+  echo "compte=$GIT_CONFIG_COUNT"
+}
+run_case "$@"
+FIN
+  } > "$work/depot/test-essai.sh"
+  if [[ $compte == - ]]; then
+    run env -u GIT_CONFIG_COUNT "$@" bash "$work/depot/test-essai.sh" affiche
+  else
+    run env GIT_CONFIG_COUNT="$compte" "$@" bash "$work/depot/test-essai.sh" affiche
+  fi
+}
+
+case_piege_processus_git_detache_configuration_ajoutee() {
+  # Une configuration déjà injectée par l'appelant est gardée : la parade s'ajoute après elle.
+  charge_lib 1 GIT_CONFIG_KEY_0=essai.cle GIT_CONFIG_VALUE_0=gardee
+  assert_eq 0 "$rc" "chargement (messages : $err)"
+  assert_eq $'core.fsmonitor false\nessai.cle gardee\ngc.auto 0\nmaintenance.auto false\ncompte=4' "$out" \
+    "la clé de l'appelant est gardée, les trois de la parade viennent après"
+  # Un zéro de tête se lit en base 10, comme git le lit : « 08 » n'est pas un octal invalide.
+  local -a huit=()
+  local i
+  for i in 0 1 2 3 4 5 6 7; do huit+=("GIT_CONFIG_KEY_$i=essai.cle" "GIT_CONFIG_VALUE_$i=cle$i"); done
+  charge_lib 08 "${huit[@]}"
+  assert_eq 0 "$rc" "chargement d'un compte à zéro de tête (messages : $err)"
+  assert_contains $'essai.cle cle7\ngc.auto 0' "$out" "la dernière clé de l'appelant est gardée"
+  assert_contains "compte=11" "$out" "les trois clés de la parade viennent après la huitième"
+  charge_lib -
+  assert_eq 0 "$rc" "chargement sans configuration injectée (messages : $err)"
+  assert_eq $'core.fsmonitor false\ngc.auto 0\nmaintenance.auto false\ncompte=3' "$out" "sans configuration injectée"
+}
+
+case_piege_processus_git_detache_compte_illisible() {
+  # Un GIT_CONFIG_COUNT illisible arrête le fichier de test en 2 au chargement, avant tout cas.
+  charge_lib x
+  assert_eq 2 "$rc" "un compte illisible est une anomalie"
+  assert_contains "GIT_CONFIG_COUNT illisible : x" "$err" "le message nomme la valeur"
+  assert_eq "" "$out" "aucun cas ne tourne"
+}
+
 run_case "$@"
