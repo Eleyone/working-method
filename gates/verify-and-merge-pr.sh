@@ -57,6 +57,10 @@ config_get convention sprint.convention
 config_get status_file sprint.status-file
 config_get stories_dir sprint.stories-dir
 config_get exempt_paths review.exempt-paths
+# les fichiers qui dirigent les agents (schéma 6) : un fichier au schéma 5 reste valide, sans contrôle de
+# ces fichiers, et le verrou de revue le dit (procedures/workflow-config.md, « Du schéma 5 au schéma 6 »)
+agent_paths=""
+((config_schema_level < 6)) || config_get agent_paths review.agent-paths
 config_get review_report review.report
 config_get guard_command guard.command
 config_get guard_patterns guard.patterns-file
@@ -67,7 +71,7 @@ config_get ci_wait ci.wait
 config_get ci_bootstrap ci.bootstrap
 config_get checks_command checks.command
 config_get forge_env_file forge.env-file
-readonly forge_base release_branch convention status_file stories_dir exempt_paths review_report \
+readonly forge_base release_branch convention status_file stories_dir exempt_paths agent_paths review_report \
   guard_command guard_patterns ci_workflow ci_context ci_statuses ci_wait ci_bootstrap checks_command forge_env_file
 # le lecteur n'admet que pr-comment (« file » est retiré) : une autre valeur serait une erreur du lecteur
 [[ $review_report == pr-comment ]] || die "review.report = $review_report : seul pr-comment est lu."
@@ -180,9 +184,29 @@ fi
 rc=0
 review_exemption "$exempt_paths" "$changed" || rc=$?
 ((rc != 2)) || die "review.exempt-paths illisible par grep : exception documentaire indécidable."
+# L'exception documentaire tombe quand la PR touche un fichier qui dirige les agents (review.agent-paths,
+# schéma 6) : la revue est alors exigée pour toute la PR, et chaque rapport du verrou nomme ces fichiers.
+# Une PR non exemptée n'est pas concernée : rien n'y change, pas même une ligne de sortie.
+lifted=""
 if ((rc == 0)); then
-  report passe "revue LLM" "exception documentaire : tous les fichiers correspondent à review.exempt-paths ($exempt_paths), revue non exigée."
-else
+  exemption="exception documentaire : tous les fichiers correspondent à review.exempt-paths ($exempt_paths), revue non exigée"
+  if [[ -z $agent_paths ]]; then
+    report passe "revue LLM" "$exemption ; fichiers dirigeant les agents : non contrôlés (schéma $config_schema_level)."
+  elif [[ $agent_paths == none ]]; then
+    report passe "revue LLM" "$exemption ; fichiers dirigeant les agents : désactivé (review.agent-paths = none)."
+  else
+    agent_rc=0
+    agent_files=$(agent_paths_touched "$agent_paths" "$changed") || agent_rc=$?
+    ((agent_rc != 2)) || die "review.agent-paths illisible : exception documentaire indécidable."
+    if ((agent_rc == 1)); then
+      report passe "revue LLM" "$exemption ; aucun fichier ne correspond à review.agent-paths."
+    else
+      lifted="exception documentaire levée, la PR touche des fichiers qui dirigent les agents (review.agent-paths) : ${agent_files//$'\n'/, } ; "
+      rc=1
+    fi
+  fi
+fi
+if ((rc != 0)); then
   # la liste des commentaires d'une issue ignore limit et page (bogue connu de Gitea) : les rapports
   # sont lus dans la timeline de la PR, qui pagine, par pages de la taille maximale admise par la forge
   code=$(gitea_api GET "/settings/api" "$tmp/settings.json")
@@ -207,21 +231,21 @@ else
   if [[ -n $head_report ]]; then
     model=${head_report#*model=}; model=${model%% *}
     if [[ $head_report == *verdict=pass ]]; then
-      report passe "revue LLM" "rapport pass sur la tête ($model)."
+      report passe "revue LLM" "${lifted}rapport pass sur la tête ($model)."
     else
-      report bloque "revue LLM" "dernier rapport sur la tête : block ($model)."
+      report bloque "revue LLM" "${lifted}dernier rapport sur la tête : block ($model)."
     fi
   elif [[ -n $parent_report ]]; then
     model=${parent_report#*model=}; model=${model%% *}
     if [[ $parent_report != *verdict=pass ]]; then
-      report bloque "revue LLM" "dernier rapport sur le parent de la tête : block ($model)."
+      report bloque "revue LLM" "${lifted}dernier rapport sur le parent de la tête : block ($model)."
     elif reason=$(status_commit_ok "$parent_sha" "$head_sha" "$story_key" "$status_file" "$stories_dir" "$convention" "$story_file"); then
-      report passe "revue LLM" "rapport pass sur ${parent_sha:0:7} ($model) ; le commit de tête respecte la règle du commit de statut."
+      report passe "revue LLM" "${lifted}rapport pass sur ${parent_sha:0:7} ($model) ; le commit de tête respecte la règle du commit de statut."
     else
-      report bloque "revue LLM" "rapport pass sur ${parent_sha:0:7}, mais le commit de tête sort de la règle du commit de statut ($reason) : nouvelle revue exigée."
+      report bloque "revue LLM" "${lifted}rapport pass sur ${parent_sha:0:7}, mais le commit de tête sort de la règle du commit de statut ($reason) : nouvelle revue exigée."
     fi
   else
-    report bloque "revue LLM" "aucun rapport llm-review sur la tête ${head_sha:0:7} ni sur son parent."
+    report bloque "revue LLM" "${lifted}aucun rapport llm-review sur la tête ${head_sha:0:7} ni sur son parent."
   fi
 fi
 

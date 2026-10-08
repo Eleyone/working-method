@@ -151,7 +151,7 @@ case_config_none_desactive_et_se_lit() {
 
 case_config_types_invalides() {
   local change
-  for change in workflow.schema=6 forge.repo=sans-barre "forge.base=a..b" "forge.base=-dev" \
+  for change in workflow.schema=7 forge.repo=sans-barre "forge.base=a..b" "forge.base=-dev" \
     "forge.branch-prefixes=feat/ fix" "forge.env-file=/etc/env" "forge.env-file=../.env" \
     "forge.env-file=a/./b" "sprint.convention=libre" review.report=courriel review.report=file review.timeout=15m \
     review.timeout=0 "review.exempt-paths=(" ci.bootstrap=yes bmad.version=6.12 \
@@ -658,6 +658,70 @@ case_config_schema_5_ci_desactivee_ensemble() {
     assert_eq 2 "$rc" "$champ désactivé alors que la CI est active"
     assert_contains "$champ : « none » refusé tant que ci.workflow porte une valeur" "$err" "la règle est nommée"
   done
+}
+
+# --- schéma 6 : les fichiers qui dirigent les agents (calculette#outillage-22) ---------------------------
+
+# Un projet au schéma 6 : $@ = changements de plus.
+schema_6_config() {
+  schema_5_config workflow.schema=6 "review.agent-paths=(^|/)AGENTS[.]md$|^docs/procedures/" "$@"
+}
+
+case_config_schema_6_est_lu() {
+  schema_6_config
+  load
+  assert_eq 0 "$rc" "schéma 6 admis (messages : $err)"
+  config_load "$work/projet/workflow.config"
+  local chemins
+  config_get chemins review.agent-paths
+  assert_eq '(^|/)AGENTS[.]md$|^docs/procedures/' "$chemins" "l'expression est rendue telle quelle"
+  schema_6_config review.agent-paths=none
+  load
+  assert_eq 0 "$rc" "none est admis : le contrôle est désactivé (messages : $err)"
+}
+
+case_config_schema_5_reste_lu_sans_agent_paths() {
+  # Le schéma 6 suit le 4 : il ajoute un champ sans imposer de migration. Un fichier au schéma 5 reste
+  # valide, et le champ ne s'y lit pas.
+  schema_5_config
+  load
+  assert_eq 0 "$rc" "un fichier au schéma 5 sans le champ reste valide (messages : $err)"
+  config_load "$work/projet/workflow.config"
+  run config_get valeur review.agent-paths
+  assert_eq 2 "$rc" "review.agent-paths ne se lit pas dans un fichier au schéma 5"
+  assert_contains "champ « review.agent-paths » du schéma 6" "$err" "le schéma du champ est nommé"
+}
+
+case_config_schema_6_exige_agent_paths() {
+  schema_6_config -review.agent-paths
+  load
+  assert_eq 2 "$rc" "review.agent-paths est requis au schéma 6 : aucune valeur par défaut"
+  assert_contains "review.agent-paths : champ absent" "$err" "le champ est nommé"
+}
+
+case_config_agent_paths_inconnu_du_schema_5() {
+  schema_5_config "review.agent-paths=^AGENTS[.]md$"
+  load
+  assert_eq 2 "$rc" "review.agent-paths est inconnu du schéma 5"
+  assert_contains "review.agent-paths : champ du schéma 6, inconnu du schéma 5" "$err" "le champ et les schémas sont nommés"
+}
+
+case_config_agent_paths_valeurs_refusees() {
+  schema_6_config review.agent-paths=
+  load
+  assert_eq 2 "$rc" "une valeur vide est refusée"
+  assert_contains "review.agent-paths : valeur vide" "$err" "le champ est nommé"
+  schema_6_config "review.agent-paths=(AGENTS"
+  load
+  assert_eq 2 "$rc" "une expression invalide est refusée, jamais lue comme « aucune correspondance »"
+  assert_contains "review.agent-paths : expression régulière étendue invalide" "$err" "la raison est nommée"
+  # « \. » hors guillemets : git config refuse la syntaxe, rien n'est lu (pièges de la syntaxe)
+  schema_6_config
+  git config -f "$work/projet/workflow.config" --unset review.agent-paths
+  printf '[review]\n\tagent-paths = (^|/)AGENTS\\.md$\n' >> "$work/projet/workflow.config"
+  load
+  assert_eq 2 "$rc" "« \\. » hors guillemets est une erreur de syntaxe de git config"
+  assert_contains "syntaxe refusée par git config" "$err" "le message des pièges de syntaxe"
 }
 
 case_config_rapport_en_fichier_retire() {

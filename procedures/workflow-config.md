@@ -37,10 +37,13 @@ avec le nom de chaque champ fautif et la raison, et l'outil sort en **code `2`**
 et l'outil qui la porte **le dit** dans sa sortie (« désactivé (… = none) ») — il ne la rend jamais
 verte en silence. Sur un champ non désactivable, `none` est une erreur de type.
 
-## Les champs — schémas 3, 4 et 5
+## Les champs — schémas 3, 4, 5 et 6
 
-Le lecteur lit les schémas **3**, **4** et **5** (« Changer de schéma », ci-dessous). Le schéma 5 ajoute au 4
-les deux champs du verrou CI, `ci.statuses` et `ci.wait` (calculette#outillage-8) : `verify-and-merge-pr`
+Le lecteur lit les schémas **3**, **4**, **5** et **6** (« Changer de schéma », ci-dessous), présentés ici
+du plus récent au plus ancien. Le schéma 6 ajoute au 5 un seul champ, `review.agent-paths`, les fichiers
+qui dirigent les agents (calculette#outillage-22) : comme le 4, il n'impose aucune migration, et un
+fichier au schéma 5 reste valide pour tous les outils, `verify-and-merge-pr` compris. Le schéma 5 ajoute
+au 4 les deux champs du verrou CI, `ci.statuses` et `ci.wait` (calculette#outillage-8) : `verify-and-merge-pr`
 les exige et refuse en `2` un fichier d'un schéma antérieur, sans repli. Le schéma 4 ajoute au 3 un
 seul champ, `sprint.non-story-files`, qu'exige la convention `keyed` : un projet `numbered` reste au
 schéma 3 sans rien changer. Par rapport au schéma 2, le 3 remplace les deux relecteurs nommés,
@@ -51,7 +54,7 @@ BMAD du projet.
 
 | Champ | Type | Désactivable | Lu par |
 |---|---|---|---|
-| `workflow.schema` | `3` \| `4` \| `5` | non | tous (`verify-and-merge-pr` : `5`) |
+| `workflow.schema` | `3` \| `4` \| `5` \| `6` | non | tous (`verify-and-merge-pr` : `5` ou `6`) |
 | `forge.repo` | `propriétaire/nom` | non | `gitea/gitea.sh` : dépôt distant vérifié, appels à l'API |
 | `forge.base` | branche (`git check-ref-format --branch`) | non | `create-pull-request`, `verify-and-merge-pr`, `llm-review` |
 | `forge.release-branch` | branche, différente de la base | **oui** | refus des PR vers elle (`create-pull-request`, `verify-and-merge-pr`) |
@@ -63,6 +66,7 @@ BMAD du projet.
 | `sprint.spec-source` | chemin | **oui** | `llm-review --story` |
 | `sprint.non-story-files` *(schéma 4)* | motifs de noms (ci-dessous) | **oui** ; `none` hors de `keyed` | `sprint-consistency` en `keyed` : fichiers `.md` du dossier des stories qui ne sont pas des stories |
 | `review.exempt-paths` | expression régulière étendue, appliquée à **chaque** chemin modifié | **oui** | `verify-and-merge-pr`, verrou de revue |
+| `review.agent-paths` *(schéma 6)* | expression régulière étendue, appliquée à **chaque** chemin modifié, comme `review.exempt-paths` : les fichiers qui **dirigent les agents** | **oui** (`none` : aucun contrôle, et le verrou le dit) | `verify-and-merge-pr`, verrou de revue, **seulement quand l'exception documentaire s'applique** : un seul fichier qui correspond la lève, et la revue est exigée pour toute la PR |
 | `review.report` | `pr-comment` (seule valeur ; `file` est retiré, calculette#outillage-8) | non | `llm-review`, `verify-and-merge-pr` |
 | `review.reviewers` *(schéma 3)* | table : entrées `auteur=modèle` séparées par une espace (ci-dessous) | non | `llm-review` : relecteur du fournisseur de l'auteur |
 | `review.timeout` | entier, en secondes | non | `llm-review` |
@@ -198,7 +202,8 @@ refusé, jamais lu « au mieux ».
 
 En règle générale, le lecteur apprend l'ancien schéma et le nouveau : c'est ce qu'il a fait du 1 au 2, et
 du 3 au 4. Le 4 n'ajoute qu'un champ, que seule la convention `keyed` lit : un projet `numbered` garde son
-fichier au schéma 3, ou monte au 4 en ajoutant `non-story-files = none` à sa section `[sprint]`.
+fichier au schéma 3, ou monte au 4 en ajoutant `non-story-files = none` à sa section `[sprint]`. Le 6 suit
+le 4 (« Du schéma 5 au schéma 6 », ci-dessous).
 ⛔ **Le schéma 3 fait exception** : les schémas 1 et 2 portent `review.reviewer-for-claude` et
 `review.reviewer-for-gemini`, que plus aucun outil ne lit. Les lire encore, ce serait accepter un
 fichier dont les relecteurs déclarés sont ignorés en silence. Un fichier au schéma 1 ou 2 est donc
@@ -224,5 +229,35 @@ none` sous `[sprint]` (le champ du schéma 4).
 | inchangé (le verrou d'avant le schéma 5) | `context` | `0` | identique : seuls les statuts de `ci.status-context`, et une CI en cours bloque tout de suite |
 | projet source | `context` | `0` | identique ; l'agent de parité ne décide toujours pas d'une fusion |
 | `calculette` | `all` | `1200` | les statuts de tous ses workflows (audit de dépendances compris), une CI en cours attendue 20 minutes (son ancien sondage, `calculette#outillage-8`) |
-| ce dépôt | `context` | `0` | identique | La PR de montée du sous-module qui
-franchit le schéma 3 réécrit le fichier dans le même commit.
+| ce dépôt | `context` | `0` | identique |
+
+La PR de montée du sous-module qui franchit le schéma 3 réécrit le fichier dans le même commit.
+
+### Du schéma 5 au schéma 6
+
+Le schéma 6 ajoute un champ à la section `[review]`, `review.agent-paths` : les fichiers qui **dirigent
+les agents** (consignes, règles, procédures, skills, couche de revue). Une erreur y est exécutée, pas
+seulement lue : une PR dispensée de revue par `review.exempt-paths` qui touche **un seul** de ces fichiers
+perd l'exception, et la revue redevient obligatoire pour **toute** la PR (calculette#outillage-22).
+
+- **Aucune migration imposée**, comme du 3 au 4 : un fichier au schéma 5 reste valide pour tous les
+  outils, `verify-and-merge-pr` compris. Le verrou de revue n'y contrôle pas ces fichiers, et le **dit**
+  sur une PR exemptée : « fichiers dirigeant les agents : non contrôlés (schéma 5) ».
+- Au schéma 6, le champ est **obligatoire**, `none` compris : « désactivé (review.agent-paths = none) ».
+  Écrit au schéma 5, il est refusé (« champ du schéma 6, inconnu du schéma 5 »).
+- **Une expression régulière, pas une liste de motifs** : même type, même comparaison (`[[ =~ ]]` de bash)
+  et mêmes pièges que `review.exempt-paths`. Une expression invalide sort en `2`, jamais en « aucune
+  correspondance ». ⚠️ Une expression étendue n'a pas de négation : « `.md` sauf `AGENTS.md` à toute
+  profondeur » ne s'écrit pas dans `review.exempt-paths` seul, d'où le second champ.
+- Une PR **non exemptée** n'est pas concernée : la revue y est déjà exigée, et le champ n'y change rien,
+  pas même une ligne de sortie.
+- Monter au 6 : `schema = 6`, et `agent-paths = <expression>` ou `agent-paths = none` sous `[review]`.
+
+| Projet | `review.exempt-paths` | `review.agent-paths` | Pourquoi |
+|---|---|---|---|
+| `calculette` | `[.]md$` | `"(^\|/)(AGENTS\|CLAUDE)[.]md$\|^[.]claude/rules/\|^docs/procedures/\|^docs/review/\|^[.](claude\|cursor\|gemini)/skills/"` | ses `.md` sont exemptés : `AGENTS.md` et `CLAUDE.md` à tout niveau, règles, procédures, couche de revue et skills ne le sont plus |
+| projet source | `^_bmad-output/` | `none` | aucun fichier qui dirige les agents n'y tombe : la question ne se pose pas |
+| ce dépôt | `none` | `none` | aucune exception : le champ n'a pas d'objet |
+
+L'expression s'écrit **entre guillemets** (elle contient `|`, et `\.` hors guillemets est une erreur de
+syntaxe de git config : on écrit `[.]`).

@@ -501,6 +501,52 @@ case_exception_documentaire() {
   assert_eq 2 "$rc" "une expression que grep refuse n'est jamais « aucune correspondance »"
 }
 
+# review.agent-paths (schéma 6, calculette#outillage-22) : les fichiers qui dirigent les agents lèvent
+# l'exception documentaire. L'expression est celle que la calculette a retenue.
+readonly agent_paths_regex='(^|/)(AGENTS|CLAUDE)[.]md$|^[.]claude/rules/|^docs/procedures/|^docs/review/|^[.](claude|cursor|gemini)/skills/'
+
+case_fichiers_qui_dirigent_les_agents() {
+  run agent_paths_touched "$agent_paths_regex" $'docs/README.md\n_bmad-output/a.md'
+  assert_eq 1 "$rc" "aucun fichier en cause : l'exception tient"
+  assert_eq "" "$out" "et rien n'est nommé"
+  run agent_paths_touched "$agent_paths_regex" $'docs/a.md\nAGENTS.md'
+  assert_eq 0 "$rc" "AGENTS.md à la racine : en cause"
+  assert_eq "AGENTS.md" "$out" "le seul fichier en cause est nommé"
+  run agent_paths_touched "$agent_paths_regex" $'e2e/AGENTS.md\ndocker/CLAUDE.md'
+  assert_eq 0 "$rc" "AGENTS.md imbriqué : en cause"
+  assert_eq $'e2e/AGENTS.md\ndocker/CLAUDE.md' "$out" "chaque fichier en cause, un par ligne, dans l'ordre de la liste"
+  run agent_paths_touched "$agent_paths_regex" 'docs/procedures/x.md'
+  assert_eq 0 "$rc" "une procédure : en cause"
+  run agent_paths_touched "$agent_paths_regex" $'.claude/skills/x/SKILL.md\n.claude/rules/r.md\ndocs/review/couche.md'
+  assert_eq 0 "$rc" "skills, règles et couche de revue : en cause"
+  assert_eq 3 "$(wc -l <<< "$out")" "les trois sont nommés"
+  run agent_paths_touched "$agent_paths_regex" 'docs/README.md'
+  assert_eq 1 "$rc" "docs/README.md ne dirige pas les agents"
+  run agent_paths_touched "$agent_paths_regex" 'docs/NOT-AGENTS.md'
+  assert_eq 1 "$rc" "un nom qui finit par AGENTS.md sans l'être n'est pas en cause"
+  run agent_paths_touched none 'none'
+  assert_eq 1 "$rc" "none n'est jamais lu comme une expression : un fichier nommé none n'est pas en cause"
+  assert_eq "" "$out" "et rien n'est nommé"
+  run agent_paths_touched '(' 'AGENTS.md'
+  assert_eq 2 "$rc" "une expression invalide n'est jamais « aucune correspondance »"
+  run agent_paths_touched '(' ''
+  assert_eq 2 "$rc" "une expression invalide sort en 2, même sur une liste vide"
+  run agent_paths_touched "$agent_paths_regex" ''
+  assert_eq 1 "$rc" "liste vide : aucun fichier en cause"
+  # une expression qui admet la chaîne vide : sans la garde de liste vide, la ligne vide que lit la
+  # boucle serait « en cause » (revue 3 de la PR n° 19)
+  run agent_paths_touched '.*' ''
+  assert_eq 1 "$rc" "liste vide, même avec une expression qui admet le vide : aucun fichier en cause"
+  assert_eq "" "$out" "et rien n'est nommé"
+  # un chemin que git cite (octet hors ASCII) : son guillemet ferait manquer le motif ancré ; il compte
+  # comme en cause, jamais comme dispensé (revue 2 de la PR n° 19)
+  run agent_paths_touched "$agent_paths_regex" $'docs/a.md\n"docs/proc\\303\\251dures/a.md"'
+  assert_eq 0 "$rc" "un chemin cité par git est en cause"
+  assert_eq '"docs/proc\303\251dures/a.md"' "$out" "et nommé tel que git l'écrit"
+  run agent_paths_touched "$agent_paths_regex" '.claude/skills/mon skill/SKILL.md'
+  assert_eq 0 "$rc" "une espace dans le chemin ne le fait pas manquer (git ne le cite pas)"
+}
+
 case_verrou_de_base() {
   run base_gate dev dev main
   assert_eq "passe" "${out%%$'\t'*}" "la base déclarée passe"

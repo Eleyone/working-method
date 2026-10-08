@@ -22,6 +22,9 @@
 #                                                      qui reste de ci.wait ; rien quand l'attente est épuisée : 0, 2 illisible
 #   review_exemption <expression|none> <fichiers>      exception documentaire : 0 tous les fichiers
 #                                                      correspondent, 1 non (ou none), 2 expression illisible
+#   agent_paths_touched <expression|none> <fichiers>   fichiers qui dirigent les agents (review.agent-paths,
+#                                                      schéma 6), un par ligne : 0 au moins un, 1 aucun (ou
+#                                                      none), 2 expression illisible
 #   base_gate <base de la PR> <forge.base> <publication|none>
 #                                                      « passe|bloque<TAB>détail » : 0
 #   pr_title <PR>                                      titre de la PR, en texte brut : 0, 2 illisible
@@ -342,6 +345,39 @@ review_exemption() { # $1 expression régulière étendue ou none, $2 liste des 
     esac
   done <<< "$changed"
   return 0
+}
+
+# Les fichiers qui dirigent les agents (review.agent-paths, schéma 6 ; calculette#outillage-22) : une PR
+# exemptée qui en touche un seul perd l'exception documentaire, et la revue redevient obligatoire pour
+# toute la PR. Ils sont écrits un par ligne, dans l'ordre de la liste, pour que le verrou les nomme.
+# « none » : aucun contrôle, jamais lu comme une expression. Même comparaison que review_exemption
+# (« [[ =~ ]] » de bash, jamais grep) ; l'expression est éprouvée AVANT la liste : invalide, elle sort en 2
+# même sans fichier, et jamais en « aucun fichier en cause ».
+# ⚠️ Un chemin que git cite (« "docs/proc\303\251dures/a.md" » : octet hors ASCII, guillemet, antislash ou
+# caractère de contrôle ; une espace seule ne l'est pas) ne se compare pas à l'expression : son guillemet
+# initial ferait manquer tout motif ancré. Il compte comme en cause : un nom qu'on ne sait pas juger
+# rétablit la revue, il ne la dispense jamais (revue 2 de la PR n° 19).
+agent_paths_touched() { # $1 expression régulière étendue ou none, $2 liste des fichiers, un par ligne
+  local regex=$1 changed=$2 file rc found=1
+  [[ $regex != none ]] || return 1
+  rc=0
+  # shellcheck disable=SC2319 # le code voulu est celui du test [[ =~ ]] : 2 dit une expression invalide
+  [[ x =~ $regex ]] 2>/dev/null || rc=$?
+  ((rc <= 1)) || return 2
+  [[ -n $changed ]] || return 1
+  while IFS= read -r file; do
+    rc=0
+    if [[ $file != \"* ]]; then
+      # shellcheck disable=SC2319 # le code voulu est celui du test [[ =~ ]] : 2 dit une expression invalide
+      [[ $file =~ $regex ]] 2>/dev/null || rc=$?
+    fi
+    case $rc in
+      0) printf '%s\n' "$file"; found=0 ;;
+      1) ;;
+      *) return 2 ;;
+    esac
+  done <<< "$changed"
+  return "$found"
 }
 
 # Verrou 1, la base : seule forge.base est admise ; la branche de publication a son propre chemin.

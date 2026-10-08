@@ -297,8 +297,130 @@ case_audit_pr_exemptee() {
   assert_eq 0 "$rc" "PR exemptée : tous les verrous passent (messages : $err)"
   verrou passe "revue LLM"
   assert_contains "exception documentaire" "$out" "l'exception est nommée"
+  assert_contains "fichiers dirigeant les agents : non contrôlés (schéma 5)." "$out" "au schéma 5, le non-contrôle est dit"
   assert_contains "contrôle global (branche sans numéro de story)" "$out" "suivi : contrôle global"
   [[ $(appels) != *timeline* ]] || { echo "la timeline a été lue pour une PR exemptée" >&2; exit 1; }
+  aucune_ecriture
+}
+
+# --- review.agent-paths (schéma 6, calculette#outillage-22) : les fichiers qui dirigent les agents ------
+
+# L'expression que la calculette a retenue, et l'exception documentaire d'un projet dont les .md sont
+# dispensés de revue.
+readonly agent_config=(workflow.schema=6 "review.exempt-paths=[.]md$"
+  "review.agent-paths=(^|/)(AGENTS|CLAUDE)[.]md$|^[.]claude/rules/|^docs/procedures/|^docs/review/|^[.](claude|cursor|gemini)/skills/")
+
+# Une PR docs/suivi qui ne touche que ces fichiers ; la forge est prête pour elle, CI verte, sans rapport
+# de revue sauf $1 (« pass » ou « block » : un rapport du compte sur sa tête). $2… = fichiers.
+pr_documentaire() {
+  local verdict=$1 f h
+  shift
+  git -C "$depot" checkout -q -b docs/suivi dev
+  for f in "$@"; do
+    mkdir -p "$(dirname "$depot/$f")"
+    printf 'note\n' > "$depot/$f"
+  done
+  commit_all "docs: des notes" > /dev/null
+  git -C "$depot" push -q "$nu" docs/suivi
+  git -C "$depot" checkout -q dev
+  forge_prete
+  h=$(git -C "$depot" rev-parse docs/suivi)
+  api GET "/repos/$repo/pulls/$pr" "$(pr_json "$h" | jq -c '.head.ref = "docs/suivi"')"
+  api GET "/repos/$repo/commits/$h/status" \
+    '{"state":"success","statuses":[{"context":"checks / checks (pull_request)","status":"success"}]}'
+  if [[ -n $verdict ]]; then
+    api GET "/repos/$repo/issues/$pr/timeline?limit=50&page=1" \
+      "$(jq -nc --arg c "llm-review sha=$h base=dev model=modele-essai verdict=$verdict" \
+        '[{type: "comment", user: {login: "compte-essai"}, body: ($c + "\n\nrapport")}]')"
+  else
+    api GET "/repos/$repo/issues/$pr/timeline?limit=50&page=1" '[]'
+  fi
+}
+
+case_audit_agent_paths_pr_exemptee_sans_fichier_dirigeant() {
+  projet "${agent_config[@]}"
+  pr_documentaire "" docs/guide.md README.md
+  verifie "$pr"
+  assert_eq 0 "$rc" "aucun fichier qui dirige les agents : l'exception tient (messages : $err$out)"
+  verrou passe "revue LLM"
+  assert_contains "revue non exigée ; aucun fichier ne correspond à review.agent-paths." "$out" "le contrôle est dit"
+  [[ $(appels) != *timeline* ]] || { echo "la timeline a été lue pour une PR exemptée" >&2; exit 1; }
+  aucune_ecriture
+}
+
+case_audit_agent_paths_leve_l_exception_sans_revue() {
+  projet "${agent_config[@]}"
+  pr_documentaire "" docs/guide.md AGENTS.md e2e/AGENTS.md
+  verifie "$pr"
+  assert_eq 1 "$rc" "une PR documentaire qui touche AGENTS.md exige la revue : sans rapport, elle bloque (messages : $err$out)"
+  verrou bloque "revue LLM"
+  assert_contains "exception documentaire levée, la PR touche des fichiers qui dirigent les agents (review.agent-paths) : AGENTS.md, e2e/AGENTS.md ; aucun rapport llm-review" \
+    "$out" "les fichiers en cause sont nommés dans le verrou, et la raison du blocage suit"
+  assert_contains "docs/suivi" "$out" "la PR est celle de la branche documentaire"
+  [[ $(appels) == *timeline* ]] || { echo "la timeline n'a pas été lue alors que la revue est exigée" >&2; exit 1; }
+  verifie "$pr" --merge
+  assert_eq 1 "$rc" "--merge refuse la PR sans revue (messages : $err$out)"
+  assert_contains "rien n'est fusionné" "$out" "le refus est dit"
+  aucune_ecriture
+}
+
+case_audit_agent_paths_leve_l_exception_rapport_block() {
+  projet "${agent_config[@]}"
+  pr_documentaire block .claude/rules/regle.md
+  verifie "$pr"
+  assert_eq 1 "$rc" "un rapport block bloque la PR dont l'exception est levée (messages : $err$out)"
+  verrou bloque "revue LLM"
+  assert_contains "(review.agent-paths) : .claude/rules/regle.md ; dernier rapport sur la tête : block" "$out" "fichier et verdict nommés"
+  aucune_ecriture
+}
+
+case_audit_agent_paths_leve_l_exception_revue_pass() {
+  projet "${agent_config[@]}"
+  pr_documentaire pass docs/procedures/fusion.md docs/guide.md
+  verifie "$pr"
+  assert_eq 0 "$rc" "avec un rapport pass sur la tête, la PR passe (messages : $err$out)"
+  verrou passe "revue LLM"
+  assert_contains "(review.agent-paths) : docs/procedures/fusion.md ; rapport pass sur la tête (modele-essai)." "$out" "le fichier en cause et le rapport sont nommés"
+  aucune_ecriture
+}
+
+case_audit_agent_paths_desactive_le_dit() {
+  projet "${agent_config[@]}" review.agent-paths=none
+  pr_documentaire "" AGENTS.md
+  verifie "$pr"
+  assert_eq 0 "$rc" "review.agent-paths = none : l'exception tient (messages : $err$out)"
+  verrou passe "revue LLM"
+  assert_contains "fichiers dirigeant les agents : désactivé (review.agent-paths = none)." "$out" "le désactivé est dit"
+  aucune_ecriture
+}
+
+case_audit_agent_paths_schema_5_le_dit() {
+  # le même projet au schéma 5 : la PR reste exemptée, comme avant le schéma 6, et le verrou dit ce
+  # qu'il n'a pas contrôlé
+  projet "review.exempt-paths=[.]md$"
+  pr_documentaire "" AGENTS.md
+  verifie "$pr"
+  assert_eq 0 "$rc" "au schéma 5, la PR documentaire reste exemptée (messages : $err$out)"
+  verrou passe "revue LLM"
+  assert_contains "fichiers dirigeant les agents : non contrôlés (schéma 5)." "$out" "le non-contrôle est dit"
+  [[ $(appels) != *timeline* ]] || { echo "la timeline a été lue pour une PR exemptée" >&2; exit 1; }
+  aucune_ecriture
+}
+
+case_audit_agent_paths_pr_non_exemptee_inchangee() {
+  # une PR qui touche AGENTS.md ET un script n'est pas exemptée : review.agent-paths n'y change rien,
+  # pas même une ligne de sortie — schéma 5 et schéma 6 rendent le même audit à l'octet
+  projet "review.exempt-paths=[.]md$"
+  pr_documentaire "" AGENTS.md scripts/outil.sh
+  verifie "$pr"
+  local rc5=$rc out5=$out
+  assert_eq 1 "$rc5" "sans rapport, une PR non exemptée bloque (messages : $err$out)"
+  write_workflow_config "$depot" "forge.repo=$repo" guard.command=scripts/garde.sh guard.patterns-file=motifs.txt \
+    review.project-layer=couche.md sprint.non-story-files=none ci.statuses=context ci.wait=0 "${agent_config[@]}"
+  verifie "$pr"
+  assert_eq "$rc5" "$rc" "même code au schéma 6"
+  assert_eq "$out5" "$out" "même sortie à l'octet au schéma 6"
+  [[ $out != *agent* ]] || { echo "une ligne sur les fichiers qui dirigent les agents est apparue : $out" >&2; exit 1; }
   aucune_ecriture
 }
 

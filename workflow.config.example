@@ -1,4 +1,4 @@
-# workflow.config — ce qui est propre à un projet qui consomme le dépôt commun. Schéma 5.
+# workflow.config — ce qui est propre à un projet qui consomme le dépôt commun. Schéma 6.
 #
 # À la racine du projet, versionné. Format de git config, lu par
 # « git config -f workflow.config --no-includes --null --list ».
@@ -18,10 +18,11 @@
 # Description de chaque champ : procedures/workflow-config.md du dépôt commun.
 
 [workflow]
-	# version du schéma : 3, 4 ou 5 ; le 4 ajoute sprint.non-story-files, qu'exige la convention keyed ;
-	# le 5 ajoute ci.statuses et ci.wait, qu'exige verify-and-merge-pr. Un fichier au schéma 1 ou 2 est
-	# refusé avec ce qu'il faut changer
-	schema = 5
+	# version du schéma : 3, 4, 5 ou 6 ; le 4 ajoute sprint.non-story-files, qu'exige la convention keyed ;
+	# le 5 ajoute ci.statuses et ci.wait, qu'exige verify-and-merge-pr ; le 6 ajoute review.agent-paths, sans
+	# migration imposée (un fichier au schéma 5 reste valide). Un fichier au schéma 1 ou 2 est refusé avec ce
+	# qu'il faut changer
+	schema = 6
 
 [forge]
 	# dépôt sur la forge, « propriétaire/nom » ; le dépôt distant origin doit être celui-là
@@ -54,6 +55,12 @@
 	# expression régulière étendue : une PR dont CHAQUE fichier correspond est dispensée de revue
 	# (désactivable)
 	exempt-paths = ^_bmad-output/
+	# schéma 6 : expression régulière étendue des fichiers qui dirigent les agents ; une PR exemptée qui en
+	# touche un seul perd l'exception, et la revue est exigée pour toute la PR (désactivable). Un projet dont
+	# les .md sont exemptés écrit par exemple, entre guillemets :
+	#   "(^|/)(AGENTS|CLAUDE)[.]md$|^[.]claude/rules/|^docs/procedures/|^docs/review/"
+	# Ici, aucun fichier qui dirige les agents n'est sous _bmad-output/ : none
+	agent-paths = none
 	# où va le rapport de revue : pr-comment, un commentaire de la PR (seule valeur ; « file » est retiré)
 	report = pr-comment
 	# table « fournisseur de l'auteur → relecteur » : une entrée « auteur=modèle » par fournisseur d'auteur
