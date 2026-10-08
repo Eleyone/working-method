@@ -72,13 +72,41 @@ case_check_niveau_et_enveloppe_transmis() {
   assert_contains "niveau release" "$out" "le résumé nomme le niveau"
 }
 
-case_check_dossier_vide_le_dit() {
+case_check_dossier_vide_rend_2() {
   # aucun contrôle et aucun préfixe : deux tableaux vides, que bash 4.3 sous set -u tenait pour non
-  # définis (constaté en rejouant la suite sous bash 4.3.48, phase C de la story outillage-14)
+  # définis (constaté en rejouant la suite sous bash 4.3.48, phase C de la story outillage-14) ; le
+  # script doit aller jusqu'à son propre refus, jamais s'arrêter sur une erreur du shell
   faux_depot
   lance
-  assert_eq 0 "$rc" "un dossier sans contrôle n'est pas une anomalie (messages : $err)"
-  assert_contains "aucun script de contrôle" "$out" "et le mécanisme le dit"
+  assert_eq 2 "$rc" "un dossier déclaré sans contrôle est une anomalie, pas une conformité (messages : $err)"
+  assert_contains "aucun script de contrôle dans scripts/checks" "$err" "le mécanisme le dit"
+  assert_contains "checks.dir = none" "$err" "et nomme la déclaration qui convient"
+}
+
+depot_sans_code() { # $1… = changements du workflow.config ; un dépôt de documents, sans aucun contrôle
+  faux_depot "$@"
+  mkdir -p "$work/faux/docs"
+  printf '# PRD\n' > "$work/faux/docs/prd.md"
+  printf '# Contrat\n' > "$work/faux/docs/contrat.md"
+  rm -f "$work/faux/scripts/checks/lib.sh"
+}
+
+case_check_depot_sans_code_non_declare_rend_2() {
+  # calculette#outillage-17, AC 4 : un contrôle sans objet qu'on a oublié de désactiver ne trouve rien ;
+  # il sort en 2, jamais en 0 — sinon un dépôt sans code passerait pour contrôlé et conforme
+  depot_sans_code
+  lance
+  assert_eq 2 "$rc" "dépôt sans code, checks.dir déclaré : anomalie (messages : $err)"
+  assert_contains "un dossier déclaré sans contrôle est une anomalie" "$err" "le motif du refus est dit"
+}
+
+case_check_depot_sans_code_desactive_le_dit() {
+  # le même dépôt, le contrôle désactivé par sa déclaration : 0, et la sortie dit qu'aucun contrôle n'a tourné
+  depot_sans_code checks.dir=none
+  lance
+  assert_eq 0 "$rc" "dépôt sans code, checks.dir = none (messages : $err)"
+  assert_contains "aucun dossier de contrôles (checks.dir = none) : aucun contrôle lancé" "$out" "désactivé, et dit"
+  [[ $out != *"contrôle(s) passés"* ]] || { echo "désactivé, mais présenté comme des contrôles passés : $out" >&2; exit 1; }
 }
 
 case_check_racine_donnee_hors_d_un_depot_git() {

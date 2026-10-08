@@ -37,7 +37,10 @@ aucune : il se versionne. Les valeurs de l'utilisatrice y sont superposées par 
   `scripts/`, **modèles** de configuration (`templates/`), licences, provenance (`SOURCE`).
 - ⛔ Ni `wds` ni `render` : `render` n'est pas un module (c'est le cache `_bmad/render/`, écrit à
   l'exécution) ; `wds` est déprécié en amont depuis 6.12.0 et exclu (décision du 04/10/2026). Un
-  projet qui les active fait sortir `bin/install` en `1`.
+  projet qui les active fait sortir `bin/install` en `1`. Le seul
+  projet qui avait installé wds s'en passe (décision d'Arnaud du 08/10/2026, calculette#outillage-17) : il
+  n'y avait jamais servi, et le module UX de `bmm` (`bmad-ux`) le remplace. Il n'existe pas de module
+  « local » à un projet : la règle de version unique n'a pas d'exception (décision 6.3 du 30/09/2026).
 
 Les fichiers `.md` des skills sont marqués `-diff` (`.gitattributes`) : un diff, celui de la revue LLM
 compris, n'en montre que la liste. ⛔ Les scripts des skills (`.py`, `.js`, `.cjs`, `.sh`…) restent
@@ -101,10 +104,21 @@ Dans la PR d'adoption (ou de montée) du projet :
    - dans un dossier de skills, une entrée `bmad-*` qui n'est pas un lien (un skill retiré en amont
      depuis la version copiée, par exemple) ;
    - dans le dossier d'un module de l'union, tout ce qui n'est ni un lien ni `config.yaml` ;
-   - dans `_bmad/_config/`, tout ce qui n'est pas `bmad-help.csv`.
+   - dans `_bmad/_config/`, tout ce qui n'est pas `bmad-help.csv` ;
+   - à la racine de `_bmad/`, tout ce qui n'est ni le dossier d'un module de l'union, ni `config.toml`,
+     `config.user.toml`, `_config/`, `scripts`, `custom/` ou `render/` : les `config.yaml`,
+     `config.user.yaml` et `module-help.csv` qu'un installeur 6.10 pose à la racine, et le dossier d'un
+     module que l'union ne porte pas (`wds`).
+
+   ⚠️ **Les skills d'un module hors de l'union ne sont pas reconnues** : elles ne portent pas le préfixe
+   `bmad-` (`wds-*`, et les skills `sync` et `memory` de wds), et rien ne les distingue d'une skill du
+   projet. Elles se suppriment **à la main**, dans la même PR, en les cherchant dans le manifeste de
+   l'ancien installeur (`_bmad/_config/skill-manifest.csv`, colonne du module) avant de le supprimer
+   (constat de la quatrième adoption, calculette#outillage-17).
 
    Jusqu'à la troisième adoption (calculette#outillage-16), seules les copies **homonymes** d'un lien
-   attendu étaient des conflits : les autres passaient en code `0` et restaient chargeables.
+   attendu étaient des conflits : les autres passaient en code `0` et restaient chargeables. Jusqu'à la
+   quatrième (calculette#outillage-17), la racine de `_bmad/` n'était pas lue : ses restes passaient de même.
 3. `_bmad/config.user.toml` : la couche utilisatrice, en `clé = "valeur"` — sans lui, `bin/install`
    rend `2` en listant les clés attendues. Il n'est pas versionné ; s'il l'était, c'est un choix du
    projet, à écrire. L'installeur BMAD 6.6 et plus l'écrit lui-même, au même format : un projet qui
@@ -125,7 +139,7 @@ skills qui en ont besoin les créent à l'usage.
 | Code | Quand |
 |---|---|
 | `0` | installé, ou déjà en place ; une édition à la main de la configuration générée est **écrasée et signalée** (`ATTENTION`) |
-| `1` | `bmad.version` différente de la version du sous-module (les deux sont nommées) ; module activé hors de l'union (`wds`, `render`…) ; `core` absent ; conflit (copie locale, lien étranger, `config.yaml` suivi par git) |
+| `1` | `bmad.version` différente de la version du sous-module (les deux sont nommées) ; module activé hors de l'union (`wds`, `render`…) ; `core` absent ; conflit (copie locale, lien étranger, `config.yaml` suivi par git, reste à la racine de `_bmad/`) |
 | `2` | `workflow.config` refusé (au schéma 1 ou 2 notamment) ; `bmad/bmad.config` ou `bmad/method/` du sous-module illisibles ou incomplets ; `_bmad/config.user.toml` absent, hors du format lu, ou sans une clé attendue |
 
 Relancé, `bin/install` ne change rien — ni un lien, ni un fichier, ni une date. Un module désactivé

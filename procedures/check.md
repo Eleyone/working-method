@@ -14,7 +14,9 @@ Un projet a **un seul** point d'entrée de ses contrôles (`checks.command` de s
 2. Il lance **tous** les scripts `*.sh` de ce dossier, découverts dynamiquement, triés, `lib.sh` exclu : une story qui ajoute un contrôle dépose son script et ne touche pas au point d'entrée.
 3. Tous tournent, même après un échec ; tous les écarts s'affichent, puis une ligne nomme les contrôles en échec. `CHECK_LEVEL`, s'il est posé par le projet, est transmis tel quel et nommé dans le résumé.
 
-Codes de sortie : `0` conforme ; `1` écart constaté ; `2` anomalie (un contrôle sorti en `2` ou plus, option inconnue, dossier introuvable, `workflow.config` refusé). Un dossier sans aucun contrôle se dit (« aucun script de contrôle ») et rend `0`, comme dans le projet source.
+Codes de sortie : `0` conforme ; `1` écart constaté ; `2` anomalie (un contrôle sorti en `2` ou plus, option inconnue, dossier introuvable, dossier déclaré sans aucun contrôle, `workflow.config` refusé).
+
+⛔ **Un dossier déclaré sans aucun contrôle sort en `2`**, jamais en `0` : c'est un contrôle sans objet qu'on a oublié de désactiver. Un projet qui n'a rien à contrôler — un dépôt de documents, sans code — le **déclare** (`checks.dir = none`), et le mécanisme le dit. Le projet source rendait `0` en le disant ; la quatrième adoption (calculette#outillage-17, dépôt sans code) a fait de ce cas une anomalie, selon la règle « une liste vide n'est pas une conformité » ci-dessous. Cas de test : `tests/test-run-checks.sh`, fixture « dépôt sans code ».
 
 ## Écrire un contrôle
 

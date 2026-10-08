@@ -304,6 +304,53 @@ case_reste_de_l_installeur_dans_config_est_un_conflit() {
   rien_d_ecrit "reste de l'installeur"
 }
 
+case_reste_a_la_racine_de_bmad_est_un_conflit() {
+  # calculette#outillage-17 : un installeur BMAD 6.10 laisse config.yaml, config.user.yaml et
+  # module-help.csv à la racine de _bmad/, et le dossier d'un module hors de l'union (wds) ; tous passaient
+  # en code 0
+  projet
+  printf 'user_name: Utilisatrice\n' > "$work/depot/_bmad/config.yaml"
+  printf 'user_name: Utilisatrice\n' > "$work/depot/_bmad/config.user.yaml"
+  printf 'module,skill\n' > "$work/depot/_bmad/module-help.csv"
+  mkdir -p "$work/depot/_bmad/wds/data"
+  printf 'wds\n' > "$work/depot/_bmad/wds/data/glossaire.md"
+  installe
+  assert_eq 1 "$rc" "un reste à la racine de _bmad/ est un conflit"
+  assert_contains "_bmad/config.yaml : ni un module de l'union" "$err" "config.yaml est nommé"
+  assert_contains "_bmad/config.user.yaml : ni un module de l'union" "$err" "config.user.yaml aussi"
+  assert_contains "_bmad/module-help.csv : ni un module de l'union" "$err" "module-help.csv aussi"
+  assert_contains "_bmad/wds : ni un module de l'union" "$err" "et le dossier d'un module hors de l'union"
+  rien_d_ecrit "reste à la racine de _bmad"
+}
+
+case_racine_de_bmad_en_lien_signalee_une_fois() {
+  # _bmad/ qui est un lien : le conflit est celui du parent (un vrai dossier est attendu) ; la racine
+  # n'est pas parcourue à travers le lien, ce qui ferait juger un dossier hors du projet
+  projet
+  mkdir -p "$work/ailleurs/wds"
+  mv "$work/depot/_bmad/config.user.toml" "$work/ailleurs/"
+  rmdir "$work/depot/_bmad"
+  ln -s "$work/ailleurs" "$work/depot/_bmad"
+  installe
+  assert_eq 1 "$rc" "_bmad/ en lien est un conflit"
+  assert_contains "_bmad : un lien ; un vrai dossier du projet est attendu" "$err" "le conflit du parent est nommé"
+  [[ $err != *"ni un module de l'union"* ]] || { echo "la racine a été parcourue à travers le lien : $err" >&2; exit 1; }
+}
+
+case_racine_de_bmad_admise() {
+  # ce que la racine de _bmad/ peut porter sans conflit : la couche utilisatrice, _bmad/custom/, le cache
+  # _bmad/render/, le dossier d'un module de l'union non activé qui garde un fichier du projet
+  projet
+  mkdir -p "$work/depot/_bmad/custom" "$work/depot/_bmad/render" "$work/depot/_bmad/cis"
+  printf '# équipe\n' > "$work/depot/_bmad/custom/config.toml"
+  printf 'cache\n' > "$work/depot/_bmad/render/a.md"
+  printf 'note\n' > "$work/depot/_bmad/cis/config.yaml"
+  installe
+  assert_eq 0 "$rc" "rien d'étranger à la racine de _bmad/ (messages : $err)"
+  installe
+  assert_eq 0 "$rc" "relancé, avec config.toml et _config/ posés par bin/install (messages : $err)"
+}
+
 case_parents_et_fichiers_generes_en_conflit() {
   # Chaque garde du plan, avant toute écriture : rien n'est écrit, et le conflit est nommé.
   local sous_module="$work/depot/outils/commun" cas

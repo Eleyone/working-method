@@ -18,7 +18,7 @@
 # s'affichent avant le résumé. CHECK_LEVEL, s'il est posé par le projet, est transmis tel quel et
 # nommé dans le résumé. checks.dir = none : aucun contrôle, et le script le dit.
 # Codes de sortie : 0 conforme ; 1 écart constaté ; 2 anomalie (contrôle en code 2 ou plus, option
-# inconnue, racine ou dossier introuvable, workflow.config refusé).
+# inconnue, racine ou dossier introuvable, dossier déclaré sans aucun contrôle, workflow.config refusé).
 # Procédure : procedures/check.md
 set -euo pipefail
 
@@ -94,9 +94,12 @@ for candidate in ${scripts[@]+"${scripts[@]}"}; do
   esac
 done
 
+# Un dossier déclaré sans aucun contrôle est une anomalie, pas une conformité : un projet qui n'a rien
+# à contrôler le déclare (checks.dir = none), et un dossier vidé par erreur ne passe jamais pour vert
+# (calculette#outillage-17 : sur un dépôt sans code, ce cas rendait 0).
 if ((${#scripts[@]} == 0)); then
-  printf '%s: aucun script de contrôle dans %s/%s.\n' "$script_name" "$checks_dir" "$level_label"
-  exit 0
+  printf '%s: aucun script de contrôle dans %s : un dossier déclaré sans contrôle est une anomalie ; un projet sans contrôle déclare checks.dir = none.\n' "$script_name" "$checks_dir" >&2
+  exit 2
 fi
 
 if ((${#failed[@]})); then

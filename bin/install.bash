@@ -267,6 +267,22 @@ if [[ -d _bmad/_config && ! -L _bmad/_config ]]; then
     conflicts+=("$path : reste de l'installeur BMAD (seul le catalogue généré, bmad-help.csv, vit dans _bmad/_config/) : le supprimer (procedures/bmad.md)")
   done
 fi
+# _bmad/ lui-même : un installeur BMAD y laisse des fichiers à la racine (config.yaml, config.user.yaml et
+# module-help.csv de BMAD 6.10) et le dossier d'un module que l'union ne porte pas (wds, retiré le
+# 04/10/2026) ; ils passaient en code 0 et restaient lisibles par les agents (constat de la quatrième
+# adoption, calculette#outillage-17). Ne sont admis que : le dossier d'un module de l'union (activé ou
+# non : le retrait ci-dessous traite celui d'un module désactivé), ce que bin/install écrit (config.toml,
+# _config/, scripts), la couche utilisatrice (config.user.toml), _bmad/custom/ et le cache _bmad/render/.
+if [[ -d _bmad && ! -L _bmad ]]; then
+  for path in _bmad/*; do
+    entry=${path#_bmad/}
+    case $entry in
+      config.toml | config.user.toml | _config | scripts | custom | render) continue ;;
+    esac
+    [[ " $bmad_declared_modules " != *" $entry "* ]] || continue
+    conflicts+=("$path : ni un module de l'union ($bmad_declared_modules), ni un fichier de bin/install, de l'utilisatrice, de _bmad/custom/ ou de _bmad/render/ : reste d'un installeur BMAD ou d'un module hors de l'union, à supprimer (procedures/bmad.md)")
+  done
+fi
 shopt -u nullglob dotglob
 if ((${#conflicts[@]})); then
   printf "%s: %s conflit(s), rien n’est écrit :\n" "$script_name" "${#conflicts[@]}" >&2
